@@ -1,10 +1,7 @@
 const puppeteer = require('puppeteer');
 
 async function scrapeOtodom(url) {
-  const browser = await puppeteer.launch({
-   headless: "new",
-   args: ['--no-sandbox', '--disable-setuid-sandbox']
-});
+ const browser = await puppeteer.launch(puppeteerConfig);
   
   try {
     const page = await browser.newPage();
