@@ -1,7 +1,21 @@
 const puppeteer = require('puppeteer-core');
 
+const puppeteerConfig = {
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu'
+  ],
+  headless: "new",
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+};
+
 async function scrapeOtodom(url) {
- const browser = await puppeteer.launch(puppeteerConfig);
+  const browser = await puppeteer.launch(puppeteerConfig);
   
   try {
     const page = await browser.newPage();
