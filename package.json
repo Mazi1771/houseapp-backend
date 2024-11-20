@@ -2,6 +2,9 @@
   "name": "houseapp-backend",
   "version": "1.0.0",
   "main": "server.js",
+  "engines": {
+    "node": ">=16"
+  },
   "dependencies": {
     "cors": "^2.8.5",
     "express": "^4.17.1",
@@ -10,6 +13,7 @@
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "postinstall": "apt-get update && apt-get install -y chromium"
   }
 }
