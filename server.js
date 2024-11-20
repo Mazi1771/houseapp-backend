@@ -31,15 +31,17 @@ mongoose.connect(process.env.MONGODB_URI, {
 // Model dla ogłoszenia
 const Property = mongoose.model('Property', {
   title: String,
-  price: Number,
-  area: Number,
-  rooms: Number,
-  location: String,
-  description: String,
-  details: Object,
+  price: { type: Number, default: null },
+  area: { type: Number, default: null },
+  rooms: { type: Number, default: null },
+  location: { type: String, default: '' },
+  description: { type: String, default: '' },
+  details: { type: Object, default: {} },
   source: String,
   sourceUrl: String,
-  createdAt: { type: Date, default: Date.now }
+  edited: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 // Endpoint do scrapowania
@@ -88,6 +90,19 @@ app.get('/test-scrape', async (req, res) => {
     res.json(scrapedData);
   } catch (error) {
     console.error('Błąd podczas testowego scrapowania:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// Endpoint do aktualizacji ogłoszenia
+app.put('/api/properties/:id', async (req, res) => {
+  try {
+    const property = await Property.findByIdAndUpdate(
+      req.params.id,
+      { ...req.body, edited: true, updatedAt: new Date() },
+      { new: true }
+    );
+    res.json(property);
+  } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
