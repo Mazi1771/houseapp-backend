@@ -9,11 +9,10 @@
     "cors": "^2.8.5",
     "express": "^4.17.1",
     "mongoose": "^6.0.12",
-    "puppeteer": "^19.0.0"
+    "puppeteer-core": "^19.0.0"
   },
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js",
-    "postinstall": "apt-get update && apt-get install -y chromium"
+    "dev": "nodemon server.js"
   }
 }
