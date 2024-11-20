@@ -1,73 +1,45 @@
-const puppeteer = require('puppeteer-core');
-
-const puppeteerConfig = {
-  args: [
-    '--no-sandbox',
-    '--disable-setuid-sandbox',
-    '--disable-dev-shm-usage',
-    '--disable-accelerated-2d-canvas',
-    '--no-first-run',
-    '--no-zygote',
-    '--disable-gpu'
-  ],
-  headless: "new",
-  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
-};
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 async function scrapeOtodom(url) {
-  const browser = await puppeteer.launch(puppeteerConfig);
-  
   try {
-    const page = await browser.newPage();
+    const response = await axios.get(url);
+    const $ = cheerio.load(response.data);
     
-    // Dodaj losowe opóźnienie między requestami
-    await page.setDefaultNavigationTimeout(30000);
-    await new Promise(r => setTimeout(r, Math.random() * 1000 + 500));
+    // Funkcje pomocnicze
+    const getText = (selector) => {
+      const element = $(selector);
+      return element.length ? element.text().trim() : '';
+    };
     
-    await page.goto(url, { waitUntil: 'networkidle0' });
+    const getNumber = (selector) => {
+      const text = getText(selector);
+      return text ? parseFloat(text.replace(/[^0-9.,]/g, '').replace(',', '.')) : null;
+    };
 
     // Pobieranie danych
-    const data = await page.evaluate(() => {
-      // Funkcje pomocnicze
-      const getText = (selector) => {
-        const element = document.querySelector(selector);
-        return element ? element.textContent.trim() : '';
-      };
-      
-      const getNumber = (selector) => {
-        const text = getText(selector);
-        return text ? parseFloat(text.replace(/[^0-9.,]/g, '').replace(',', '.')) : null;
-      };
+    const data = {
+      title: getText('h1.css-1wnihf5'),
+      price: getNumber('strong.css-1i5yyw0'),
+      location: getText('a.css-1qz7z11'),
+      description: getText('div.css-1t507yq'),
+      details: {},
+      source: 'otodom.pl'
+    };
 
-      // Pobierz wszystkie szczegóły oferty
-      const detailsElements = document.querySelectorAll('[data-testid="ad.top-information.table"] > div');
-      const details = {};
-      detailsElements.forEach(element => {
-        const label = element.querySelector('div:first-child')?.textContent.trim();
-        const value = element.querySelector('div:last-child')?.textContent.trim();
-        if (label && value) {
-          details[label] = value;
-        }
-      });
-
-      return {
-        title: getText('[data-cy="adPageHeader.title"]'),
-        price: getNumber('[data-cy="adPageHeaderPrice"]'),
-        area: getNumber('[aria-label="Powierzchnia"]'),
-        rooms: getNumber('[aria-label="Liczba pokoi"]'),
-        location: getText('[aria-label="Adres"]'),
-        description: getText('[data-cy="adPageDescription"]'),
-        details,
-        source: 'otodom.pl'
-      };
+    // Pobierz szczegóły
+    $('.css-1ccovha').each((i, element) => {
+      const label = $(element).find('.css-1ccovha').text().trim();
+      const value = $(element).find('.css-1wi2w6s').text().trim();
+      if (label && value) {
+        data.details[label] = value;
+      }
     });
 
     return data;
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
     throw new Error(`Nie udało się pobrać danych z ${url}: ${error.message}`);
-  } finally {
-    await browser.close();
   }
 }
 
