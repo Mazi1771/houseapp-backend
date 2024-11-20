@@ -3,7 +3,20 @@ const express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const { scrapeOtodom } = require('./scrapers/otodom');
-
+// Konfiguracja Puppeteer dla Render.com
+const puppeteerConfig = {
+  args: [
+    '--no-sandbox',
+    '--disable-setuid-sandbox',
+    '--disable-dev-shm-usage',
+    '--disable-accelerated-2d-canvas',
+    '--no-first-run',
+    '--no-zygote',
+    '--disable-gpu'
+  ],
+  headless: "new",
+  executablePath: process.env.PUPPETEER_EXECUTABLE_PATH || null
+};
 const app = express();
 
 app.use(cors());
