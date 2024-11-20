@@ -64,7 +64,17 @@ app.get('/api/properties', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+// Endpoint testowy z przykładowym URL
+app.get('/test-scrape', async (req, res) => {
+  try {
+    const testUrl = 'https://www.otodom.pl/pl/oferta/3-pokojowe-mieszkanie-52m2-ogrodek-bez-prowizji-ID4rB82';
+    const scrapedData = await scrapeOtodom(testUrl);
+    res.json(scrapedData);
+  } catch (error) {
+    console.error('Błąd podczas testowego scrapowania:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 const port = process.env.PORT || 10000;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
