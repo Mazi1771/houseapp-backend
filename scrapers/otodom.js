@@ -1,27 +1,44 @@
 const axios = require('axios');
+const cheerio = require('cheerio');
 
 async function scrapeOtodom(url) {
   try {
-    const SCRAPING_API = 'http://api.scraperapi.com';
-    const API_KEY = process.env.SCRAPER_API_KEY || 'darmowy_klucz_testowy';
+    console.log('SCRAPER_API_KEY:', process.env.SCRAPER_API_KEY); // Debug log
+    const apiUrl = `http://api.scraperapi.com?api_key=${process.env.SCRAPER_API_KEY}&url=${encodeURIComponent(url)}`;
+    console.log('Making request to:', apiUrl); // Debug log
 
-    const response = await axios.get(`${SCRAPING_API}?api_key=${API_KEY}&url=${encodeURIComponent(url)}`);
+    const response = await axios.get(apiUrl);
+    const $ = cheerio.load(response.data);
     
-    // Ekstrakcja danych z response.data
-    // Implementacja parsowania HTML
+    // Debug logs
+    console.log('Response status:', response.status);
+    console.log('Response data length:', response.data.length);
+
+    // Extract data
+    const title = $('h1').text().trim();
+    const priceElement = $('strong').filter((i, el) => $(el).text().includes('zł')).first();
+    const areaElement = $('div').filter((i, el) => $(el).text().includes('m²')).first();
+    const roomsElement = $('div').filter((i, el) => $(el).text().includes('pokoj')).first();
 
     return {
-      title: '', 
-      price: 0,
-      area: 0,
-      rooms: 0,
-      location: '',
-      description: '',
+      title: title || '',
+      price: extractNumber(priceElement.text()) || 0,
+      area: extractNumber(areaElement.text()) || 0,
+      rooms: extractNumber(roomsElement.text()) || 0,
+      location: $('address').text().trim() || '',
+      description: $('[data-cy="adPageDescription"]').text().trim() || '',
       source: 'otodom.pl'
     };
   } catch (error) {
-    throw new Error(`Scraping error: ${error.message}`);
+    console.error('Scraping error:', error.response?.data || error.message);
+    throw error;
   }
+}
+
+function extractNumber(text) {
+  if (!text) return 0;
+  const match = text.match(/\d+([.,]\d+)?/);
+  return match ? parseFloat(match[0].replace(',', '.')) : 0;
 }
 
 module.exports = { scrapeOtodom };
