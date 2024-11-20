@@ -43,6 +43,9 @@ const Property = mongoose.model('Property', {
 });
 
 // Endpoint do scrapowania
+app.get('/', (req, res) => {
+  res.json({ message: 'API działa!' });
+});
 app.post('/api/scrape', async (req, res) => {
   try {
     const { url } = req.body;
