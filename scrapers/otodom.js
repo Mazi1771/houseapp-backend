@@ -10,59 +10,64 @@ async function scrapeOtodom(url) {
         'Accept-Language': 'pl-PL,pl;q=0.9,en-US;q=0.8,en;q=0.7',
         'Accept-Encoding': 'gzip, deflate, br',
         'Referer': 'https://www.google.com/',
-        'DNT': '1',
-        'Connection': 'keep-alive',
-        'Upgrade-Insecure-Requests': '1',
-        'Sec-Fetch-Dest': 'document',
-        'Sec-Fetch-Mode': 'navigate',
-        'Sec-Fetch-Site': 'cross-site',
-        'Sec-Fetch-User': '?1',
         'Cache-Control': 'max-age=0'
       }
     });
     
     const $ = cheerio.load(response.data);
     
+    // Dodajmy logowanie HTML do debugowania
+    console.log('HTML strony:', response.data);
+
     // Funkcje pomocnicze
     const getText = (selector) => {
       const element = $(selector);
-      return element.length ? element.text().trim() : '';
+      const text = element.length ? element.text().trim() : '';
+      console.log(`Selector ${selector}:`, text); // Debug log
+      return text;
     };
     
     const getNumber = (text) => {
-      return text ? parseFloat(text.replace(/[^0-9.,]/g, '').replace(',', '.')) : null;
+      if (!text) return null;
+      const numbers = text.match(/\d+([.,]\d+)?/);
+      return numbers ? parseFloat(numbers[0].replace(',', '.')) : null;
     };
 
-    // Pobieranie danych
-    const priceText = $('[data-cy="adPageHeaderPrice"]').text();
-    const areaText = $('[aria-label="Powierzchnia"]').text();
-    const roomsText = $('[aria-label="Liczba pokoi"]').text();
+    // Próbujmy różnych selektorów
+    const title = getText('h1') || getText('.css-1wnihf5') || getText('[data-cy="adPageHeader.title"]');
+    const priceText = getText('.css-8qi9av') || getText('[data-cy="adPageHeaderPrice"]');
+    const areaText = getText('.css-1gi2yjx:contains("Powierzchnia")') || getText('[aria-label="Powierzchnia"]');
+    const roomsText = getText('.css-1gi2yjx:contains("Liczba pokoi")') || getText('[aria-label="Liczba pokoi"]');
+    const locationText = getText('.css-1si1nqs') || getText('[aria-label="Adres"]');
+    const descriptionText = getText('.css-1t507yq') || getText('[data-cy="adPageDescription"]');
 
     const data = {
-      title: $('[data-cy="adPageHeader.title"]').text().trim(),
+      title,
       price: getNumber(priceText),
       area: getNumber(areaText),
       rooms: getNumber(roomsText),
-      location: $('[aria-label="Adres"]').text().trim(),
-      description: $('[data-cy="adPageDescription"]').text().trim(),
+      location: locationText,
+      description: descriptionText,
       details: {},
       source: 'otodom.pl'
     };
 
-    // Pobieranie szczegółów
-    $('[data-testid="ad.top-information.table"] > div').each((i, element) => {
-      const label = $(element).find('div:first-child').text().trim();
-      const value = $(element).find('div:last-child').text().trim();
+    // Zbieramy wszystkie szczegóły
+    $('.css-1ccovha, [data-testid="ad.top-information.table"] > div').each((i, element) => {
+      const label = $(element).find('div:first').text().trim();
+      const value = $(element).find('div:last').text().trim();
       if (label && value) {
         data.details[label] = value;
+        console.log(`Detail ${label}:`, value); // Debug log
       }
     });
 
-    console.log('Pobrane dane:', data); // Dodajemy log
+    console.log('Pobrane dane:', data);
     return data;
 
   } catch (error) {
     console.error('Szczegóły błędu:', error.response?.status, error.response?.statusText);
+    console.error('Error stack:', error.stack);
     throw new Error(`Nie udało się pobrać danych z ${url}: ${error.message}`);
   }
 }
