@@ -110,3 +110,12 @@ const port = process.env.PORT || 10000;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
 });
+// Endpoint do usuwania ogłoszenia
+app.delete('/api/properties/:id', async (req, res) => {
+  try {
+    await Property.findByIdAndDelete(req.params.id);
+    res.status(200).json({ message: 'Ogłoszenie zostało usunięte' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
