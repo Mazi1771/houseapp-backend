@@ -21,7 +21,7 @@ const Property = mongoose.model('Property', {
  description: { type: String, default: '' },
  status: { 
    type: String, 
-   enum: ['wybierz','do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
+   enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
    default: 'wybierz'
  },
  rating: { 
