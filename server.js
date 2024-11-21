@@ -36,6 +36,11 @@ const Property = mongoose.model('Property', {
   rooms: { type: Number, default: null },
   location: { type: String, default: '' },
   description: { type: String, default: '' },
+  status: { 
+    type: String, 
+    enum: ['do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
+    default: 'stan deweloperski'
+  },
   details: { type: Object, default: {} },
   source: String,
   sourceUrl: String,
