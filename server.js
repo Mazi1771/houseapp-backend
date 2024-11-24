@@ -138,6 +138,98 @@ app.post('/api/boards/:boardId/properties', auth, async (req, res) => {
 });
 
 const port = process.env.PORT || 10000;
+// Endpoint do rejestracji
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+    
+    // Sprawdź czy użytkownik już istnieje
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
+    }
+
+    // Hash hasła
+    const hashedPassword = await bcrypt.hash(password, 10);
+
+    // Stwórz nowego użytkownika
+    const user = new User({
+      email,
+      password: hashedPassword,
+      name
+    });
+
+    await user.save();
+
+    // Stwórz domyślną tablicę dla użytkownika
+    const defaultBoard = new Board({
+      name: 'Moja tablica',
+      owner: user._id,
+      isPrivate: true
+    });
+
+    await defaultBoard.save();
+
+    // Dodaj tablicę do użytkownika
+    user.boards.push(defaultBoard._id);
+    await user.save();
+
+    // Generuj JWT
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({ 
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint do logowania
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+
+    // Znajdź użytkownika
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
+
+    // Sprawdź hasło
+    const isValidPassword = await bcrypt.hash(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
+
+    // Generuj JWT
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.json({ 
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
 });
