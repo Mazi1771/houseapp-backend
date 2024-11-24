@@ -15,7 +15,7 @@ mongoose.connect(process.env.MONGODB_URI, {
   useUnifiedTopology: true
 });
 
-// Modele
+// Schemat użytkownika
 const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
   password: { type: String, required: true },
@@ -27,6 +27,7 @@ const UserSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Schemat tablicy
 const BoardSchema = new mongoose.Schema({
   name: { type: String, required: true },
   owner: {
@@ -53,6 +54,7 @@ const BoardSchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now }
 });
 
+// Schemat nieruchomości
 const PropertySchema = new mongoose.Schema({
   title: String,
   price: { type: Number, default: null },
@@ -106,31 +108,50 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Funkcja scrapera
+// Funkcja scrapująca
 async function scrapeOtodom(url) {
   try {
+    console.log('Rozpoczynam scrapowanie:', url);
+    
     const scrapingApiKey = process.env.SCRAPING_API_KEY;
     const encodedUrl = encodeURIComponent(url);
-    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}`;
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
 
+    console.log('Wysyłam request do ScraperAPI');
     const response = await axios.get(apiUrl);
     const html = response.data;
     const $ = cheerio.load(html);
 
-    const title = $('h1').first().text().trim();
-    const priceText = $('[aria-label="Cena"]').first().text().trim();
+    console.log('HTML pobrany, długość:', html.length);
+    console.log('Szukam elementów...');
+
+    const title = $('[data-cy="adPageHeader"]').text().trim() || $('h1').first().text().trim();
+    console.log('Znaleziony tytuł:', title);
+
+    const priceText = $('[aria-label="Cena"]').first().text().trim() || 
+                     $('[data-cy="adPageHeaderPrice"]').first().text().trim();
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+    console.log('Znaleziona cena:', price);
 
-    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim();
+    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
+                    $('div:contains("Powierzchnia")').next().text().trim();
     const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
+    console.log('Znaleziona powierzchnia:', area);
 
-    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim();
+    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
+                     $('div:contains("Liczba pokoi")').next().text().trim();
     const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
+    console.log('Znaleziona liczba pokoi:', rooms);
 
-    const location = $('[aria-label="Adres"]').first().text().trim();
-    const description = $('[data-cy="adPageAdDescription"]').first().text().trim();
+    const location = $('[aria-label="Adres"]').first().text().trim() ||
+                    $('[data-cy="adPageHeaderLocation"]').first().text().trim();
+    console.log('Znaleziona lokalizacja:', location);
 
-    return {
+    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
+                       $('.eo9qioj1').first().text().trim();
+    console.log('Znaleziony opis:', description ? description.substring(0, 100) + '...' : 'brak');
+
+    const result = {
       title,
       price,
       area,
@@ -140,29 +161,36 @@ async function scrapeOtodom(url) {
       sourceUrl: url,
       source: 'otodom'
     };
+
+    console.log('Scrapowanie zakończone sukcesem:', result);
+    return result;
+
   } catch (error) {
-    console.error('Błąd podczas scrapowania:', error);
-    throw new Error('Nie udało się pobrać danych z Otodom');
+    console.error('Błąd podczas scrapowania:', error.message);
+    console.error('Stack trace:', error.stack);
+    throw new Error(`Nie udało się pobrać danych z Otodom: ${error.message}`);
   }
 }
 
-// Endpoint testowy
+// Endpointy
+
+// Test API
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
 });
 
-// Endpoint do rejestracji
+// Rejestracja
 app.post('/api/auth/register', async (req, res) => {
   try {
     const { email, password, name } = req.body;
-
+    
     const existingUser = await User.findOne({ email });
     if (existingUser) {
       return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
     }
 
     const hashedPassword = await bcrypt.hash(password, 10);
-
+    
     const user = new User({
       email,
       password: hashedPassword,
@@ -201,7 +229,7 @@ app.post('/api/auth/register', async (req, res) => {
   }
 });
 
-// Endpoint do logowania
+// Logowanie
 app.post('/api/auth/login', async (req, res) => {
   try {
     const { email, password } = req.body;
@@ -235,7 +263,7 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Endpoint do scrapowania
+// Scraping
 app.post('/api/scrape', auth, async (req, res) => {
   try {
     const { url } = req.body;
@@ -273,7 +301,7 @@ app.post('/api/scrape', auth, async (req, res) => {
   }
 });
 
-// Endpoint do pobierania właściwości
+// Pobieranie właściwości
 app.get('/api/properties', auth, async (req, res) => {
   try {
     const boards = await Board.find({
@@ -291,7 +319,7 @@ app.get('/api/properties', auth, async (req, res) => {
   }
 });
 
-// Endpoint do aktualizacji właściwości
+// Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
   try {
     const property = await Property.findOneAndUpdate(
@@ -317,7 +345,7 @@ app.put('/api/properties/:id', auth, async (req, res) => {
   }
 });
 
-// Endpoint do usuwania właściwości
+// Usuwanie właściwości
 app.delete('/api/properties/:id', auth, async (req, res) => {
   try {
     const property = await Property.findOne({
