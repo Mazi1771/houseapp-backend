@@ -3,83 +3,84 @@ const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
-const { scrapeOtodom } = require('./scrapers/otodom');
+const axios = require('axios');
+const cheerio = require('cheerio');
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 mongoose.connect(process.env.MONGODB_URI, {
- useNewUrlParser: true,
- useUnifiedTopology: true
+  useNewUrlParser: true,
+  useUnifiedTopology: true
 });
 
 // Modele
 const UserSchema = new mongoose.Schema({
- email: { type: String, required: true, unique: true },
- password: { type: String, required: true },
- name: { type: String },
- boards: [{
-   type: mongoose.Schema.Types.ObjectId,
-   ref: 'Board'
- }],
- createdAt: { type: Date, default: Date.now }
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  name: { type: String },
+  boards: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Board'
+  }],
+  createdAt: { type: Date, default: Date.now }
 });
 
 const BoardSchema = new mongoose.Schema({
- name: { type: String, required: true },
- owner: {
-   type: mongoose.Schema.Types.ObjectId,
-   ref: 'User',
-   required: true
- },
- shared: [{
-   user: {
-     type: mongoose.Schema.Types.ObjectId,
-     ref: 'User'
-   },
-   role: {
-     type: String,
-     enum: ['viewer', 'editor'],
-     default: 'viewer'
-   }
- }],
- properties: [{
-   type: mongoose.Schema.Types.ObjectId,
-   ref: 'Property'
- }],
- isPrivate: { type: Boolean, default: true },
- createdAt: { type: Date, default: Date.now }
+  name: { type: String, required: true },
+  owner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  shared: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    role: {
+      type: String,
+      enum: ['viewer', 'editor'],
+      default: 'viewer'
+    }
+  }],
+  properties: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Property'
+  }],
+  isPrivate: { type: Boolean, default: true },
+  createdAt: { type: Date, default: Date.now }
 });
 
 const PropertySchema = new mongoose.Schema({
- title: String,
- price: { type: Number, default: null },
- area: { type: Number, default: null },
- rooms: { type: Number, default: null },
- location: { type: String, default: '' },
- description: { type: String, default: '' },
- status: { 
-   type: String, 
-   enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
-   default: 'wybierz'
- },
- rating: { 
-   type: String, 
-   enum: ['favorite', 'interested', 'not_interested', null],
-   default: null 
- },
- details: { type: Object, default: {} },
- source: String,
- sourceUrl: String,
- board: {
-   type: mongoose.Schema.Types.ObjectId,
-   ref: 'Board',
-   required: true
- },
- edited: { type: Boolean, default: false },
- createdAt: { type: Date, default: Date.now },
- updatedAt: { type: Date, default: Date.now }
+  title: String,
+  price: { type: Number, default: null },
+  area: { type: Number, default: null },
+  rooms: { type: Number, default: null },
+  location: { type: String, default: '' },
+  description: { type: String, default: '' },
+  status: {
+    type: String,
+    enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
+    default: 'wybierz'
+  },
+  rating: {
+    type: String,
+    enum: ['favorite', 'interested', 'not_interested', null],
+    default: null
+  },
+  details: { type: Object, default: {} },
+  source: String,
+  sourceUrl: String,
+  board: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Board',
+    required: true
+  },
+  edited: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
 });
 
 const User = mongoose.model('User', UserSchema);
@@ -88,152 +89,259 @@ const Property = mongoose.model('Property', PropertySchema);
 
 // Middleware autoryzacji
 const auth = async (req, res, next) => {
- try {
-   const token = req.header('Authorization').replace('Bearer ', '');
-   const decoded = jwt.verify(token, process.env.JWT_SECRET);
-   const user = await User.findOne({ _id: decoded.userId });
+  try {
+    const token = req.header('Authorization').replace('Bearer ', '');
+    const decoded = jwt.verify(token, process.env.JWT_SECRET);
+    const user = await User.findOne({ _id: decoded.userId });
 
-   if (!user) {
-     throw new Error();
-   }
+    if (!user) {
+      throw new Error();
+    }
 
-   req.user = user;
-   req.token = token;
-   next();
- } catch (error) {
-   res.status(401).json({ error: 'Proszę się zalogować' });
- }
+    req.user = user;
+    req.token = token;
+    next();
+  } catch (error) {
+    res.status(401).json({ error: 'Proszę się zalogować' });
+  }
 };
+
+// Funkcja scrapera
+async function scrapeOtodom(url) {
+  try {
+    const scrapingApiKey = process.env.SCRAPING_API_KEY;
+    const encodedUrl = encodeURIComponent(url);
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}`;
+
+    const response = await axios.get(apiUrl);
+    const html = response.data;
+    const $ = cheerio.load(html);
+
+    const title = $('h1').first().text().trim();
+    const priceText = $('[aria-label="Cena"]').first().text().trim();
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+
+    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim();
+    const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
+
+    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim();
+    const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
+
+    const location = $('[aria-label="Adres"]').first().text().trim();
+    const description = $('[data-cy="adPageAdDescription"]').first().text().trim();
+
+    return {
+      title,
+      price,
+      area,
+      rooms,
+      location,
+      description,
+      sourceUrl: url,
+      source: 'otodom'
+    };
+  } catch (error) {
+    console.error('Błąd podczas scrapowania:', error);
+    throw new Error('Nie udało się pobrać danych z Otodom');
+  }
+}
 
 // Endpoint testowy
 app.get('/', (req, res) => {
- res.json({ message: 'API działa!' });
+  res.json({ message: 'API działa!' });
 });
 
 // Endpoint do rejestracji
 app.post('/api/auth/register', async (req, res) => {
- try {
-   const { email, password, name } = req.body;
-   
-   // Sprawdź czy użytkownik już istnieje
-   const existingUser = await User.findOne({ email });
-   if (existingUser) {
-     return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
-   }
+  try {
+    const { email, password, name } = req.body;
 
-   // Hash hasła
-   const hashedPassword = await bcrypt.hash(password, 10);
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
+    }
 
-   // Stwórz nowego użytkownika
-   const user = new User({
-     email,
-     password: hashedPassword,
-     name
-   });
+    const hashedPassword = await bcrypt.hash(password, 10);
 
-   await user.save();
+    const user = new User({
+      email,
+      password: hashedPassword,
+      name
+    });
 
-   // Stwórz domyślną tablicę dla użytkownika
-   const defaultBoard = new Board({
-     name: 'Moja tablica',
-     owner: user._id,
-     isPrivate: true
-   });
+    await user.save();
 
-   await defaultBoard.save();
+    const defaultBoard = new Board({
+      name: 'Moja tablica',
+      owner: user._id,
+      isPrivate: true
+    });
 
-   // Dodaj tablicę do użytkownika
-   user.boards.push(defaultBoard._id);
-   await user.save();
+    await defaultBoard.save();
 
-   // Generuj JWT
-   const token = jwt.sign(
-     { userId: user._id },
-     process.env.JWT_SECRET,
-     { expiresIn: '24h' }
-   );
+    user.boards.push(defaultBoard._id);
+    await user.save();
 
-   res.status(201).json({ 
-     token,
-     user: {
-       id: user._id,
-       email: user.email,
-       name: user.name
-     }
-   });
- } catch (error) {
-   res.status(500).json({ error: error.message });
- }
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 // Endpoint do logowania
 app.post('/api/auth/login', async (req, res) => {
- try {
-   const { email, password } = req.body;
+  try {
+    const { email, password } = req.body;
 
-   // Znajdź użytkownika
-   const user = await User.findOne({ email });
-   if (!user) {
-     return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
-   }
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
 
-   // Sprawdź hasło
-   const isValidPassword = await bcrypt.compare(password, user.password);
-   if (!isValidPassword) {
-     return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
-   }
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
 
-   // Generuj JWT
-   const token = jwt.sign(
-     { userId: user._id },
-     process.env.JWT_SECRET,
-     { expiresIn: '24h' }
-   );
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
 
-   res.json({ 
-     token,
-     user: {
-       id: user._id,
-       email: user.email,
-       name: user.name
-     }
-   });
- } catch (error) {
-   res.status(500).json({ error: error.message });
- }
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
-// Dotychczasowe endpointy dla nieruchomości, zaktualizowane o obsługę tablic
-app.post('/api/boards/:boardId/properties', auth, async (req, res) => {
- try {
-   const board = await Board.findOne({
-     _id: req.params.boardId,
-     $or: [
-       { owner: req.user._id },
-       { 'shared.user': req.user._id, 'shared.role': 'editor' }
-     ]
-   });
+// Endpoint do scrapowania
+app.post('/api/scrape', auth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    
+    if (!url || !url.includes('otodom.pl')) {
+      return res.status(400).json({ error: 'Nieprawidłowy URL. Musi być z serwisu Otodom.' });
+    }
 
-   if (!board) {
-     return res.status(404).json({ error: 'Tablica nie została znaleziona' });
-   }
+    const defaultBoard = await Board.findOne({ owner: req.user._id });
+    if (!defaultBoard) {
+      return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
+    }
 
-   const property = new Property({
-     ...req.body,
-     board: board._id
-   });
+    console.log('Rozpoczynam scrapowanie URL:', url);
+    const scrapedData = await scrapeOtodom(url);
+    console.log('Pobrane dane:', scrapedData);
 
-   await property.save();
-   board.properties.push(property._id);
-   await board.save();
+    const property = new Property({
+      ...scrapedData,
+      board: defaultBoard._id,
+      status: 'wybierz'
+    });
 
-   res.status(201).json(property);
- } catch (error) {
-   res.status(500).json({ error: error.message });
- }
+    await property.save();
+    defaultBoard.properties.push(property._id);
+    await defaultBoard.save();
+
+    res.json(property);
+  } catch (error) {
+    console.error('Błąd w endpoincie /api/scrape:', error);
+    res.status(500).json({
+      error: 'Wystąpił błąd podczas pobierania danych',
+      details: error.message
+    });
+  }
+});
+
+// Endpoint do pobierania właściwości
+app.get('/api/properties', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id }
+      ]
+    });
+
+    const boardIds = boards.map(board => board._id);
+    const properties = await Property.find({ board: { $in: boardIds } });
+    res.json(properties);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint do aktualizacji właściwości
+app.put('/api/properties/:id', auth, async (req, res) => {
+  try {
+    const property = await Property.findOneAndUpdate(
+      {
+        _id: req.params.id,
+        board: { $in: req.user.boards }
+      },
+      {
+        ...req.body,
+        updatedAt: Date.now(),
+        edited: true
+      },
+      { new: true }
+    );
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    res.json(property);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Endpoint do usuwania właściwości
+app.delete('/api/properties/:id', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    await Board.updateOne(
+      { _id: property.board },
+      { $pull: { properties: property._id } }
+    );
+
+    await Property.deleteOne({ _id: req.params.id });
+    res.json({ message: 'Nieruchomość została usunięta' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
 
 const port = process.env.PORT || 10000;
 app.listen(port, '0.0.0.0', () => {
- console.log(`Serwer działa na porcie ${port}`);
+  console.log(`Serwer działa na porcie ${port}`);
 });
