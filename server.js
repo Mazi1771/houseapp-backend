@@ -695,7 +695,6 @@ app.get('/api/properties/:id/price-history', auth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-const port = process.env.PORT || 10000;
 
 if (cron) {
   cron.schedule('0 3 * * *', () => {
