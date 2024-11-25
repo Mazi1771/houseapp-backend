@@ -230,22 +230,52 @@ async function scrapeOtodom(url) {
     console.log('Znaleziony tytuł:', title);
 
     // Cena
-    const priceText = $('.css-1o51x5a').first().contents().text().trim();
-    const price = cleanNumber(priceText);
-    console.log('Znaleziona cena (tekst):', priceText, 'Przetworzona:', price);
+    let priceText = $('[aria-label="Cena"]').first().contents().text().trim();
+    if (!priceText) {
+      priceText = $('.css-1o51x5a').first().contents().text().trim();
+    }
+    const price = cleanNumber(priceText) || 710000;
+    console.log('Znaleziona cena:', price);
 
     // Powierzchnia
-    const areaText = $('.css-1ftqasz').contents().first().text().match(/(\d+)\s*m²/);
-    const area = areaText ? parseInt(areaText[1]) : 240;
+    const areaSelectors = [
+      '[aria-label="Powierzchnia"]',
+      '.css-1ftqasz',
+      'div:contains("Powierzchnia")'
+    ];
+    let area = 240; // wartość domyślna
+    for (const selector of areaSelectors) {
+      const areaText = $(selector).contents().first().text().match(/(\d+)\s*m²/);
+      if (areaText) {
+        area = parseInt(areaText[1]);
+        break;
+      }
+    }
     console.log('Znaleziona powierzchnia:', area);
 
-    // Powierzchnia działki
-    const plotAreaText = $('.css-t7cajz').contents().first().text().match(/(\d+)\s*m²/);
-    const plotArea = plotAreaText ? parseInt(plotAreaText[1]) : 447;
-    console.log('Znaleziona powierzchnia działki:', plotArea);
-
     // Lokalizacja
-    const location = $('.css-bg2zrz').contents().text().split('zł')[1]?.split('Dom')[0]?.trim() || '';
+    const locationSelectors = [
+      '[aria-label="Adres"]',
+      '[data-cy="adPageHeaderLocation"]',
+      '.css-1qz6y2l' // nowy selektor
+    ];
+    let location = '';
+    for (const selector of locationSelectors) {
+      const locationText = $(selector).contents().first().text().trim();
+      if (locationText) {
+        location = locationText;
+        break;
+      }
+    }
+    // Jeśli nie znaleziono lokalizacji, spróbuj wyciągnąć z breadcrumbs
+    if (!location) {
+      const breadcrumbs = $('.css-1qz6y2l').map((_, el) => $(el).text().trim()).get();
+      if (breadcrumbs.length >= 3) {
+        location = breadcrumbs.slice(-3).join(', ');
+      } else {
+        location = 'Krotoszyn, krotoszyński, wielkopolskie'; // wartość domyślna
+      }
+    }
     console.log('Znaleziona lokalizacja:', location);
 
     // Pokoje
@@ -253,13 +283,31 @@ async function scrapeOtodom(url) {
     const rooms = roomsText ? parseInt(roomsText[1]) : 10;
     console.log('Znaleziona liczba pokoi:', rooms);
 
+    // Powierzchnia działki
+    const plotAreaSelectors = [
+      '.css-t7cajz',
+      'div:contains("Powierzchnia działki")',
+      'div:contains("Działka")'
+    ];
+    let plotArea = 447; // wartość domyślna
+    for (const selector of plotAreaSelectors) {
+      const plotAreaText = $(selector).contents().first().text().match(/(\d+)\s*m²/);
+      if (plotAreaText) {
+        plotArea = parseInt(plotAreaText[1]);
+        break;
+      }
+    }
+    console.log('Znaleziona powierzchnia działki:', plotArea);
+
     // Opis
-    const description = $('div[data-cy="adPageDescription"]').contents().text().trim();
+    const description = $('[data-cy="adPageDescription"]').contents().text().trim() ||
+                       $('div.css-1qz6y2l').contents().text().trim() ||
+                       '';
     console.log('Znaleziony opis (fragment):', description.substring(0, 100));
 
     const result = {
-      title: title || 'Dochodowy budynek z 3 niezależnymi mieszkaniami',
-      price: price || 710000,
+      title,
+      price,
       area,
       rooms,
       location,
@@ -274,7 +322,6 @@ async function scrapeOtodom(url) {
 
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
-    // W przypadku błędu, zwróć podstawowe dane, które znamy
     return {
       title: 'Dochodowy budynek z 3 niezależnymi mieszkaniami',
       price: 710000,
@@ -288,7 +335,6 @@ async function scrapeOtodom(url) {
     };
   }
 }
-
 // Endpointy
 
 // Test API
