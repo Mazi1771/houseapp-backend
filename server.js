@@ -200,7 +200,8 @@ const auth = async (req, res, next) => {
   }
 };
 
-// Funkcja scrapująca
+// Zaktualizuj funkcję scrapowania w server.js:
+
 async function scrapeOtodom(url) {
   try {
     console.log('Rozpoczynam scrapowanie:', url);
@@ -214,49 +215,77 @@ async function scrapeOtodom(url) {
     const html = response.data;
     const $ = cheerio.load(html);
 
-    console.log('HTML pobrany, długość:', html.length);
-    console.log('Szukam elementów...');
+    console.log('HTML załadowany, parsowanie danych...');
 
-    const title = $('[data-cy="adPageHeader"]').text().trim() || $('h1').first().text().trim();
-    console.log('Znaleziony tytuł:', title);
+    // Funkcja pomocnicza do bezpiecznego parsowania liczb
+    const safeParseFloat = (text) => {
+      if (!text) return null;
+      const match = text.match(/[\d.,]+/);
+      if (!match) return null;
+      const number = parseFloat(match[0].replace(',', '.'));
+      return isNaN(number) ? null : number;
+    };
 
+    const safeParseInt = (text) => {
+      if (!text) return null;
+      const match = text.match(/\d+/);
+      if (!match) return null;
+      const number = parseInt(match[0]);
+      return isNaN(number) ? null : number;
+    };
+
+    // Pobieranie danych z różnymi selektorami
+    const title = $('[data-cy="adPageHeader"]').text().trim() || 
+                 $('h1').first().text().trim() || 
+                 'Brak tytułu';
+
+    console.log('Tytuł:', title);
+
+    // Cena
     const priceText = $('[aria-label="Cena"]').first().text().trim() || 
                      $('[data-cy="adPageHeaderPrice"]').first().text().trim();
-    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
-    console.log('Znaleziona cena:', price);
+    const price = safeParseInt(priceText);
+    console.log('Cena tekst:', priceText, 'Sparsowana:', price);
 
+    // Powierzchnia
     const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
-                    $('div:contains("Powierzchnia")').next().text().trim();
-    const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
-    console.log('Znaleziona powierzchnia:', area);
+                    $('div:contains("Powierzchnia")').next().text().trim() ||
+                    $('div:contains("powierzchnia")').next().text().trim();
+    const area = safeParseFloat(areaText);
+    console.log('Powierzchnia tekst:', areaText, 'Sparsowana:', area);
 
+    // Pokoje
     const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
-                     $('div:contains("Liczba pokoi")').next().text().trim();
-    const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
-    console.log('Znaleziona liczba pokoi:', rooms);
+                     $('div:contains("Liczba pokoi")').next().text().trim() ||
+                     $('div:contains("pokoje")').next().text().trim();
+    const rooms = safeParseInt(roomsText);
+    console.log('Pokoje tekst:', roomsText, 'Sparsowane:', rooms);
 
+    // Lokalizacja
     const location = $('[aria-label="Adres"]').first().text().trim() ||
-                    $('[data-cy="adPageHeaderLocation"]').first().text().trim();
-    console.log('Znaleziona lokalizacja:', location);
+                    $('[data-cy="adPageHeaderLocation"]').first().text().trim() ||
+                    '';
+    console.log('Lokalizacja:', location);
 
+    // Opis
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
-                       $('.eo9qioj1').first().text().trim();
-    console.log('Znaleziony opis:', description ? description.substring(0, 100) + '...' : 'brak');
+                       $('.eo9qioj1').first().text().trim() ||
+                       '';
+    console.log('Opis (fragment):', description.substring(0, 100) + '...');
 
     const result = {
-      title,
-      price,
-      area,
-      rooms,
-      location,
-      description,
+      title: title || null,
+      price: price || null,
+      area: area || null,
+      rooms: rooms || null,
+      location: location || null,
+      description: description || null,
       sourceUrl: url,
       source: 'otodom'
     };
 
-    console.log('Scrapowanie zakończone sukcesem:', result);
+    console.log('Sparsowane dane:', result);
     return result;
-
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error.message);
     console.error('Stack trace:', error.stack);
