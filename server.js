@@ -216,61 +216,111 @@ async function scrapeOtodom(url) {
 
     console.log('HTML załadowany, parsowanie danych...');
 
-    // Funkcja pomocnicza do bezpiecznego parsowania liczb
-    const safeParseNumber = (text, type = 'float') => {
-      try {
-        if (!text) return null;
-        const match = text.match(/[\d.,]+/);
-        if (!match) return null;
-        const number = type === 'float' 
-          ? parseFloat(match[0].replace(',', '.'))
-          : parseInt(match[0]);
-        return isNaN(number) ? null : number;
-      } catch (e) {
-        console.log(`Błąd parsowania liczby: ${text}`, e);
-        return null;
-      }
+    // Funkcja do czyszczenia tekstu z ceny
+    const cleanPriceText = (text) => {
+      if (!text) return null;
+      // Usuń wszystkie spacje i znaki specjalne, zostaw tylko cyfry
+      const cleaned = text.replace(/\s+/g, '').replace(/[^\d]/g, '');
+      const number = parseInt(cleaned);
+      return isNaN(number) ? null : number;
     };
 
-    // Pobieranie danych
+    // Funkcja do czyszczenia tekstu z powierzchni
+    const cleanAreaText = (text) => {
+      if (!text) return null;
+      // Znajdź liczby z przecinkiem lub kropką
+      const match = text.match(/([\d\s]+[.,]?\d*)/);
+      if (!match) return null;
+      // Zamień przecinek na kropkę i usuń spacje
+      const cleaned = match[0].replace(',', '.').replace(/\s+/g, '');
+      const number = parseFloat(cleaned);
+      return isNaN(number) ? null : number;
+    };
+
+    // Funkcja do czyszczenia tekstu z liczby pokoi
+    const cleanRoomsText = (text) => {
+      if (!text) return null;
+      const match = text.match(/\d+/);
+      if (!match) return null;
+      const number = parseInt(match[0]);
+      return isNaN(number) ? null : number;
+    };
+
+    // Pobieranie tytułu
     const title = $('[data-cy="adPageHeader"]').text().trim() || 
                  $('h1').first().text().trim() || 
-                 url.split('/').pop(); // użyj części URL jako fallback
+                 $('[data-cy="listing-title"]').text().trim();
+    console.log('Znaleziony tytuł:', title);
 
-    const priceText = $('[aria-label="Cena"]').first().text().trim() || 
-                     $('[data-cy="adPageHeaderPrice"]').first().text().trim();
-    const price = safeParseNumber(priceText, 'int');
+    // Pobieranie ceny - sprawdź różne selektory i formaty
+    const priceSelectors = [
+      '[data-cy="adPageHeaderPrice"]',
+      '[aria-label="Cena"]',
+      '.css-8qi9av', // przykładowy selektor Otodom
+      'div[data-testid="ad-price-container"]'
+    ];
 
-    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
-                    $('div:contains("Powierzchnia")').next().text().trim() ||
-                    $('div:contains("powierzchnia")').next().text().trim();
-    const area = safeParseNumber(areaText, 'float');
+    let priceText;
+    for (const selector of priceSelectors) {
+      const element = $(selector).first();
+      if (element.length) {
+        priceText = element.text().trim();
+        break;
+      }
+    }
+    const price = cleanPriceText(priceText);
+    console.log('Znaleziona cena (tekst):', priceText, 'Przetworzona:', price);
 
-    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
-                     $('div:contains("Liczba pokoi")').next().text().trim() ||
-                     $('div:contains("pokoje")').next().text().trim();
-    const rooms = safeParseNumber(roomsText, 'int');
+    // Pobieranie powierzchni - sprawdź różne selektory i formaty
+    const areaSelectors = [
+      '[aria-label="Powierzchnia"]',
+      'div:contains("Powierzchnia") + div',
+      'div[data-testid="table-value-area"]'
+    ];
 
+    let areaText;
+    for (const selector of areaSelectors) {
+      const element = $(selector).first();
+      if (element.length) {
+        areaText = element.text().trim();
+        break;
+      }
+    }
+    const area = cleanAreaText(areaText);
+    console.log('Znaleziona powierzchnia (tekst):', areaText, 'Przetworzona:', area);
+
+    // Pobieranie liczby pokoi - sprawdź różne selektory i formaty
+    const roomsSelectors = [
+      '[aria-label="Liczba pokoi"]',
+      'div:contains("Liczba pokoi") + div',
+      'div[data-testid="table-value-rooms_num"]'
+    ];
+
+    let roomsText;
+    for (const selector of roomsSelectors) {
+      const element = $(selector).first();
+      if (element.length) {
+        roomsText = element.text().trim();
+        break;
+      }
+    }
+    const rooms = cleanRoomsText(roomsText);
+    console.log('Znaleziona liczba pokoi (tekst):', roomsText, 'Przetworzona:', rooms);
+
+    // Pobieranie lokalizacji
     const location = $('[aria-label="Adres"]').first().text().trim() ||
                     $('[data-cy="adPageHeaderLocation"]').first().text().trim() ||
-                    '';
+                    $('div[data-testid="ad-header-location"]').text().trim();
+    console.log('Znaleziona lokalizacja:', location);
 
-    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
-                       $('.eo9qioj1').first().text().trim() ||
-                       '';
+    // Pobieranie opisu
+    const description = $('[data-cy="adPageDescription"]').text().trim() ||
+                       $('.eo9qioj1').text().trim() ||
+                       $('div[data-testid="ad-description"]').text().trim();
+    console.log('Znaleziony opis (fragment):', description?.substring(0, 100));
 
-    // Log dla debugowania
-    console.log('Sparsowane wartości:', {
-      title,
-      price,
-      area,
-      rooms,
-      hasLocation: !!location,
-      hasDescription: !!description
-    });
-
-    return {
-      title,
+    const result = {
+      title: title || null,
       price: price || null,
       area: area || null,
       rooms: rooms || null,
@@ -279,9 +329,12 @@ async function scrapeOtodom(url) {
       sourceUrl: url,
       source: 'otodom'
     };
+
+    console.log('Końcowe dane:', result);
+    return result;
+
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
-    // Zwróć podstawowe dane nawet w przypadku błędu
     return {
       title: url.split('/').pop(),
       price: null,
