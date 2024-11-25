@@ -95,19 +95,38 @@ const Property = mongoose.model('Property', PropertySchema);
 // Middleware autoryzacji
 const auth = async (req, res, next) => {
   try {
-    const token = req.header('Authorization').replace('Bearer ', '');
-    const decoded = jwt.verify(token, process.env.JWT_SECRET);
-    const user = await User.findOne({ _id: decoded.userId });
+    const authHeader = req.header('Authorization');
+    console.log('Auth header:', authHeader); // debugging
 
-    if (!user) {
-      throw new Error();
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new Error('Brak tokenu autoryzacji');
     }
 
-    req.user = user;
-    req.token = token;
-    next();
+    const token = authHeader.replace('Bearer ', '');
+    console.log('Token otrzymany:', token ? 'Jest' : 'Brak'); // debugging
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('Token zdekodowany:', decoded); // debugging
+
+      const user = await User.findOne({ _id: decoded.userId });
+      if (!user) {
+        throw new Error('Nie znaleziono użytkownika');
+      }
+
+      req.user = user;
+      req.token = token;
+      next();
+    } catch (error) {
+      console.error('Błąd weryfikacji tokenu:', error); // debugging
+      throw new Error('Token nieprawidłowy lub wygasł');
+    }
   } catch (error) {
-    res.status(401).json({ error: 'Proszę się zalogować' });
+    console.error('Błąd autoryzacji:', error.message); // debugging
+    res.status(401).json({ 
+      error: 'Proszę się zalogować', 
+      details: error.message 
+    });
   }
 };
 
