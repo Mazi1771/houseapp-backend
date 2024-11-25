@@ -5,34 +5,44 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const cheerio = require('cheerio');
-const cron = require('node-cron');
 
 const app = express();
 
 // Lista dozwolonych origin'ów
 const allowedOrigins = [
   'https://houseapp-uhmg.vercel.app',
-  'https://houseapp-uhmg-46y3jw4q5-barteks-projects-c321e8d8.vercel.app',
+  'https://houseapp-uhmg-git-main-barteks-projects.vercel.app',
+  'https://houseapp-uhmg-*-barteks-projects.vercel.app', // dla preview deployments
   'http://localhost:3000'
 ];
 
 // Konfiguracja CORS
 app.use(cors({
   origin: function(origin, callback) {
-    // Pozwól na requesty bez originu (np. Postman, curl)
+    // pozwól requestom bez originu (np. Postman)
     if (!origin) return callback(null, true);
-    
-    if (allowedOrigins.includes(origin)) {
+
+    // sprawdź czy origin jest dozwolony (włącznie z wildcard matching)
+    const isAllowed = allowedOrigins.some(allowedOrigin => {
+      if (allowedOrigin.includes('*')) {
+        const regex = new RegExp('^' + allowedOrigin.replace('*', '.*') + '$');
+        return regex.test(origin);
+      }
+      return allowedOrigin === origin;
+    });
+
+    if (isAllowed) {
       callback(null, true);
     } else {
       console.log('Niedozwolony origin:', origin);
       callback(new Error('Not allowed by CORS'));
     }
   },
+  credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true,
-  maxAge: 86400 // cache preflight requests for 24 hours
+  exposedHeaders: ['Content-Range', 'X-Content-Range'],
+  maxAge: 600 // Cache preflight requests for 10 minutes
 }));
 
 // Explicit handling dla OPTIONS requests
