@@ -263,24 +263,98 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Scraping
+// Endpoint do scrapowania
 app.post('/api/scrape', auth, async (req, res) => {
   try {
     const { url } = req.body;
+    console.log('Otrzymany URL:', url);
     
-    if (!url || !url.includes('otodom.pl')) {
-      return res.status(400).json({ error: 'Nieprawidłowy URL. Musi być z serwisu Otodom.' });
+    // Sprawdzenie czy URL jest prawidłowy
+    if (!url) {
+      return res.status(400).json({ error: 'URL jest wymagany' });
     }
 
+    if (!url.includes('otodom.pl')) {
+      return res.status(400).json({ error: 'URL musi być z serwisu Otodom' });
+    }
+
+    // Sprawdzenie klucza API
+    const scrapingApiKey = process.env.SCRAPING_API_KEY;
+    if (!scrapingApiKey) {
+      console.error('Brak klucza API');
+      return res.status(500).json({ error: 'Błąd konfiguracji serwera' });
+    }
+
+    // Pobieranie tablicy użytkownika
+    console.log('Szukam tablicy użytkownika:', req.user._id);
     const defaultBoard = await Board.findOne({ owner: req.user._id });
     if (!defaultBoard) {
+      console.error('Nie znaleziono tablicy dla użytkownika:', req.user._id);
       return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
     }
 
-    console.log('Rozpoczynam scrapowanie URL:', url);
-    const scrapedData = await scrapeOtodom(url);
-    console.log('Pobrane dane:', scrapedData);
+    console.log('Rozpoczynam scrapowanie...');
+    const encodedUrl = encodeURIComponent(url);
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
 
+    // Wykonanie requestu do ScraperAPI
+    console.log('Wysyłam request do ScraperAPI...');
+    const response = await axios.get(apiUrl, {
+      timeout: 60000, // 60 sekund timeout
+      headers: {
+        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+
+    if (!response.data) {
+      console.error('Brak danych w odpowiedzi');
+      return res.status(500).json({ error: 'Nie udało się pobrać danych ze strony' });
+    }
+
+    const $ = cheerio.load(response.data);
+    console.log('HTML załadowany, parsowanie danych...');
+
+    // Parsowanie danych
+    const title = $('[data-cy="adPageHeader"]').text().trim() || $('h1').first().text().trim();
+    if (!title) {
+      console.error('Nie znaleziono tytułu');
+      return res.status(500).json({ error: 'Nie udało się sparsować danych ze strony' });
+    }
+
+    const priceText = $('[aria-label="Cena"]').first().text().trim() || 
+                     $('[data-cy="adPageHeaderPrice"]').first().text().trim();
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+
+    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
+                    $('div:contains("Powierzchnia")').next().text().trim();
+    const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
+
+    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
+                     $('div:contains("Liczba pokoi")').next().text().trim();
+    const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
+
+    const location = $('[aria-label="Adres"]').first().text().trim() ||
+                    $('[data-cy="adPageHeaderLocation"]').first().text().trim();
+
+    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
+                       $('.eo9qioj1').first().text().trim();
+
+    const scrapedData = {
+      title,
+      price,
+      area,
+      rooms,
+      location,
+      description: description || '',
+      sourceUrl: url,
+      source: 'otodom'
+    };
+
+    console.log('Dane sparsowane:', scrapedData);
+
+    // Zapisywanie do bazy
+    console.log('Tworzenie nowej nieruchomości...');
     const property = new Property({
       ...scrapedData,
       board: defaultBoard._id,
@@ -288,15 +362,27 @@ app.post('/api/scrape', auth, async (req, res) => {
     });
 
     await property.save();
+    console.log('Nieruchomość zapisana, ID:', property._id);
+
+    // Aktualizacja tablicy
     defaultBoard.properties.push(property._id);
     await defaultBoard.save();
+    console.log('Tablica zaktualizowana');
 
     res.json(property);
   } catch (error) {
-    console.error('Błąd w endpoincie /api/scrape:', error);
+    console.error('Szczegóły błędu:', {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data
+    });
+
+    // Bardziej szczegółowa odpowiedź błędu
     res.status(500).json({
       error: 'Wystąpił błąd podczas pobierania danych',
-      details: error.message
+      details: error.message,
+      type: error.name,
+      statusCode: error.response?.status
     });
   }
 });
