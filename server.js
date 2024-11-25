@@ -132,8 +132,11 @@ const PropertySchema = new mongoose.Schema({
   title: String,
   price: { type: Number, default: null, required: false },
   area: { type: Number, default: null, required: false },
+  plotArea: { type: Number, default: null, required: false }, // powierzchnia działki
   rooms: { type: Number, default: null, required: false },
   location: { type: String, default: '' },
+  city: { type: String, default: '' }, // miasto
+  district: { type: String, default: '' }, // dzielnica/okolica
   description: { type: String, default: '' },
   status: {
     type: String,
@@ -148,6 +151,7 @@ const PropertySchema = new mongoose.Schema({
   details: { type: Object, default: {} },
   source: String,
   sourceUrl: String,
+  propertyType: { type: String, default: '' }, // typ nieruchomości (dom/mieszkanie)
   board: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Board',
@@ -214,120 +218,106 @@ async function scrapeOtodom(url) {
     const html = response.data;
     const $ = cheerio.load(html);
 
-    console.log('HTML załadowany, parsowanie danych...');
-
-    // Funkcja do czyszczenia tekstu z ceny
-    const cleanPriceText = (text) => {
+    // Funkcja do czyszczenia tekstu z liczb
+    const cleanNumber = (text, type = 'int') => {
       if (!text) return null;
-      // Usuń wszystkie spacje i znaki specjalne, zostaw tylko cyfry
-      const cleaned = text.replace(/\s+/g, '').replace(/[^\d]/g, '');
-      const number = parseInt(cleaned);
+      // Usuń wszystkie znaki specjalne oprócz kropki i przecinka
+      const cleaned = text.replace(/[^\d.,]/g, '').replace(',', '.');
+      const number = type === 'int' ? parseInt(cleaned) : parseFloat(cleaned);
       return isNaN(number) ? null : number;
     };
 
-    // Funkcja do czyszczenia tekstu z powierzchni
-    const cleanAreaText = (text) => {
-      if (!text) return null;
-      // Znajdź liczby z przecinkiem lub kropką
-      const match = text.match(/([\d\s]+[.,]?\d*)/);
-      if (!match) return null;
-      // Zamień przecinek na kropkę i usuń spacje
-      const cleaned = match[0].replace(',', '.').replace(/\s+/g, '');
-      const number = parseFloat(cleaned);
-      return isNaN(number) ? null : number;
+    // Funkcja do szukania wartości w tabeli parametrów
+    const findParameterValue = (parameterName) => {
+      let value = '';
+      $('div.css-1ccovha').each((_, element) => {
+        const label = $(element).find('div:first-child').text().trim();
+        if (label.toLowerCase().includes(parameterName.toLowerCase())) {
+          value = $(element).find('div:last-child').text().trim();
+          return false; // przerwij iterację
+        }
+      });
+      return value;
     };
 
-    // Funkcja do czyszczenia tekstu z liczby pokoi
-    const cleanRoomsText = (text) => {
-      if (!text) return null;
-      const match = text.match(/\d+/);
-      if (!match) return null;
-      const number = parseInt(match[0]);
-      return isNaN(number) ? null : number;
-    };
-
-    // Pobieranie tytułu
+    // Pobieranie danych podstawowych
     const title = $('[data-cy="adPageHeader"]').text().trim() || 
-                 $('h1').first().text().trim() || 
-                 $('[data-cy="listing-title"]').text().trim();
-    console.log('Znaleziony tytuł:', title);
+                 $('h1').first().text().trim();
+    console.log('Tytuł:', title);
 
-    // Pobieranie ceny - sprawdź różne selektory i formaty
-    const priceSelectors = [
-      '[data-cy="adPageHeaderPrice"]',
-      '[aria-label="Cena"]',
-      '.css-8qi9av', // przykładowy selektor Otodom
-      'div[data-testid="ad-price-container"]'
-    ];
+    // Cena
+    const priceText = $('[data-cy="adPageHeaderPrice"]').text().trim() ||
+                     $('[aria-label="Cena"]').text().trim();
+    const price = cleanNumber(priceText);
+    console.log('Cena:', price);
 
-    let priceText;
-    for (const selector of priceSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        priceText = element.text().trim();
-        break;
-      }
-    }
-    const price = cleanPriceText(priceText);
-    console.log('Znaleziona cena (tekst):', priceText, 'Przetworzona:', price);
+    // Typ nieruchomości
+    const propertyType = findParameterValue('typ nieruchomości') || 
+                        findParameterValue('rodzaj zabudowy');
+    console.log('Typ nieruchomości:', propertyType);
 
-    // Pobieranie powierzchni - sprawdź różne selektory i formaty
-    const areaSelectors = [
-      '[aria-label="Powierzchnia"]',
-      'div:contains("Powierzchnia") + div',
-      'div[data-testid="table-value-area"]'
-    ];
+    // Powierzchnia użytkowa
+    const areaText = $('[aria-label="Powierzchnia"]').text().trim() ||
+                    findParameterValue('powierzchnia');
+    const area = cleanNumber(areaText, 'float');
+    console.log('Powierzchnia użytkowa:', area);
 
-    let areaText;
-    for (const selector of areaSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        areaText = element.text().trim();
-        break;
-      }
-    }
-    const area = cleanAreaText(areaText);
-    console.log('Znaleziona powierzchnia (tekst):', areaText, 'Przetworzona:', area);
+    // Powierzchnia działki
+    const plotAreaText = findParameterValue('powierzchnia działki') ||
+                        findParameterValue('działka');
+    const plotArea = cleanNumber(plotAreaText, 'float');
+    console.log('Powierzchnia działki:', plotArea);
 
-    // Pobieranie liczby pokoi - sprawdź różne selektory i formaty
-    const roomsSelectors = [
-      '[aria-label="Liczba pokoi"]',
-      'div:contains("Liczba pokoi") + div',
-      'div[data-testid="table-value-rooms_num"]'
-    ];
+    // Pokoje
+    const roomsText = findParameterValue('liczba pokoi') ||
+                     $('[aria-label="Liczba pokoi"]').text().trim();
+    const rooms = cleanNumber(roomsText);
+    console.log('Liczba pokoi:', rooms);
 
-    let roomsText;
-    for (const selector of roomsSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        roomsText = element.text().trim();
-        break;
-      }
-    }
-    const rooms = cleanRoomsText(roomsText);
-    console.log('Znaleziona liczba pokoi (tekst):', roomsText, 'Przetworzona:', rooms);
+    // Lokalizacja
+    const fullLocationText = $('[data-cy="adPageHeaderLocation"]').text().trim() ||
+                           $('[aria-label="Adres"]').text().trim();
+    console.log('Pełna lokalizacja:', fullLocationText);
 
-    // Pobieranie lokalizacji
-    const location = $('[aria-label="Adres"]').first().text().trim() ||
-                    $('[data-cy="adPageHeaderLocation"]').first().text().trim() ||
-                    $('div[data-testid="ad-header-location"]').text().trim();
-    console.log('Znaleziona lokalizacja:', location);
+    // Parsowanie lokalizacji
+    const locationParts = fullLocationText.split(',').map(part => part.trim());
+    const city = locationParts[0] || '';
+    const district = locationParts[1] || '';
+    const street = locationParts[2] || '';
+    
+    console.log('Miasto:', city);
+    console.log('Dzielnica:', district);
+    console.log('Ulica:', street);
 
-    // Pobieranie opisu
+    // Opis
     const description = $('[data-cy="adPageDescription"]').text().trim() ||
-                       $('.eo9qioj1').text().trim() ||
-                       $('div[data-testid="ad-description"]').text().trim();
-    console.log('Znaleziony opis (fragment):', description?.substring(0, 100));
+                       $('.eo9qioj1').text().trim();
+
+    // Pobieranie dodatkowych parametrów
+    const details = {};
+    $('div.css-1ccovha').each((_, element) => {
+      const label = $(element).find('div:first-child').text().trim();
+      const value = $(element).find('div:last-child').text().trim();
+      if (label && value) {
+        details[label] = value;
+      }
+    });
+    console.log('Dodatkowe parametry:', details);
 
     const result = {
-      title: title || null,
-      price: price || null,
-      area: area || null,
-      rooms: rooms || null,
-      location: location || '',
-      description: description || '',
+      title,
+      price,
+      area,
+      plotArea,
+      rooms,
+      location: fullLocationText,
+      city,
+      district,
+      description,
       sourceUrl: url,
-      source: 'otodom'
+      source: 'otodom',
+      propertyType,
+      details
     };
 
     console.log('Końcowe dane:', result);
@@ -339,11 +329,16 @@ async function scrapeOtodom(url) {
       title: url.split('/').pop(),
       price: null,
       area: null,
+      plotArea: null,
       rooms: null,
       location: '',
+      city: '',
+      district: '',
       description: '',
       sourceUrl: url,
-      source: 'otodom'
+      source: 'otodom',
+      propertyType: '',
+      details: {}
     };
   }
 }
