@@ -564,17 +564,30 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Pobieranie właściwości
 app.get('/api/properties', auth, async (req, res) => {
   try {
+    console.log('Pobieranie nieruchomości dla użytkownika:', req.user._id);
+    
     const boards = await Board.find({
       $or: [
         { owner: req.user._id },
         { 'shared.user': req.user._id }
       ]
-    });
+    }).lean();
 
     const boardIds = boards.map(board => board._id);
-    const properties = await Property.find({ board: { $in: boardIds } });
+    console.log('Znalezione tablice:', boardIds.length);
+
+    const properties = await Property.find({ 
+      board: { $in: boardIds } 
+    })
+    .lean()
+    .sort({ createdAt: -1 });
+
+    console.log('Znalezione nieruchomości:', properties.length);
+
+    res.set('Cache-Control', 'no-cache');
     res.json(properties);
   } catch (error) {
+    console.error('Błąd podczas pobierania właściwości:', error);
     res.status(500).json({ error: error.message });
   }
 });
