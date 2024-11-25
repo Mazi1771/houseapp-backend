@@ -39,6 +39,55 @@ app.options('*', cors());
 
 app.use(express.json());
 
+// Lepsze logowanie dla MongoDB
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB połączone pomyślnie');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('Błąd połączenia MongoDB:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB rozłączone');
+});
+
+// Zaktualizowana konfiguracja połączenia z MongoDB
+const connectDB = async () => {
+  try {
+    const mongoURI = process.env.MONGODB_URI;
+    console.log('Próba połączenia z MongoDB...');
+    console.log('URI present:', !!mongoURI);
+
+    if (!mongoURI) {
+      throw new Error('Brak MONGODB_URI w zmiennych środowiskowych');
+    }
+
+    await mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000, // Timeout po 5 sekundach
+      socketTimeoutMS: 45000, // Timeout dla operacji po 45 sekundach
+      family: 4 // Wymuś IPv4
+    });
+
+    console.log('Połączenie z MongoDB ustanowione');
+  } catch (err) {
+    console.error('Błąd podczas łączenia z MongoDB:', err);
+    // Spróbuj ponownie za 5 sekund
+    setTimeout(connectDB, 5000);
+  }
+};
+
+// Pierwsze połączenie
+connectDB();
+
+// Automatyczne ponowne połączenie w razie rozłączenia
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB rozłączone - próba ponownego połączenia...');
+  setTimeout(connectDB, 5000);
+});
+
 // Schemat użytkownika
 const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
