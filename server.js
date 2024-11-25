@@ -711,4 +711,3 @@ cron.schedule('0 3 * * *', () => {
   console.log('Rozpoczynam zaplanowaną aktualizację cen...');
   updatePropertyPrices();
 });
-});
