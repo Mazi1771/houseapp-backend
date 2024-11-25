@@ -8,16 +8,37 @@ const cheerio = require('cheerio');
 
 const app = express();
 
+// Lista dozwolonych origin'ów
+const allowedOrigins = [
+  'https://houseapp-uhmg.vercel.app',
+  'https://houseapp-uhmg-46y3jw4q5-barteks-projects-c321e8d8.vercel.app',
+  'http://localhost:3000'
+];
+
 // Konfiguracja CORS
 app.use(cors({
-  origin: ['https://houseapp-uhmg.vercel.app', 'http://localhost:3000'],
+  origin: function(origin, callback) {
+    // Pozwól na requesty bez originu (np. Postman, curl)
+    if (!origin) return callback(null, true);
+    
+    if (allowedOrigins.includes(origin)) {
+      callback(null, true);
+    } else {
+      console.log('Niedozwolony origin:', origin);
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization'],
-  credentials: true
+  credentials: true,
+  maxAge: 86400 // cache preflight requests for 24 hours
 }));
-app.use(express.json());
-// Test dla preflight requests
+
+// Explicit handling dla OPTIONS requests
 app.options('*', cors());
+
+app.use(express.json());
+
 // Schemat użytkownika
 const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
