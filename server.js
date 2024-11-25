@@ -229,106 +229,78 @@ async function scrapeOtodom(url) {
     const encodedUrl = encodeURIComponent(url);
     const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
 
+    console.log('Wysyłam request do ScraperAPI');
     const response = await axios.get(apiUrl);
     const html = response.data;
     const $ = cheerio.load(html);
 
-    // Pomocnicze funkcje
-    const cleanNumber = (text) => {
-      if (!text) return null;
-      const cleaned = text.replace(/[^\d]/g, '');
-      const number = parseInt(cleaned);
-      return isNaN(number) ? null : number;
-    };
-
-    // Tytuł
-    const title = $('h1').first().contents().text().trim();
-    console.log('Znaleziony tytuł:', title);
-
-    // Cena
-    let priceText = $('[aria-label="Cena"]').first().contents().text().trim();
-    if (!priceText) {
-      priceText = $('.css-1o51x5a').first().contents().text().trim();
-    }
-    const price = cleanNumber(priceText) || 710000;
-    console.log('Znaleziona cena:', price);
-
-    // Powierzchnia
-    const areaSelectors = [
-      '[aria-label="Powierzchnia"]',
-      '.css-1ftqasz',
-      'div:contains("Powierzchnia")'
-    ];
-    let area = 240; // wartość domyślna
-    for (const selector of areaSelectors) {
-      const areaText = $(selector).contents().first().text().match(/(\d+)\s*m²/);
-      if (areaText) {
-        area = parseInt(areaText[1]);
-        break;
-      }
-    }
-    console.log('Znaleziona powierzchnia:', area);
-
-    // Lokalizacja
-    const locationSelectors = [
-      '[aria-label="Adres"]',
-      '[data-cy="adPageHeaderLocation"]',
-      '.css-1qz6y2l' // nowy selektor
-    ];
+    // Pobieranie lokalizacji - sprawdzamy różne możliwe selektory
     let location = '';
+    const locationSelectors = [
+      '[data-cy="adPageHeaderLocation"]',
+      'header [aria-label="Adres"]',
+      'div[data-testid="ad-header-location"]',
+      // Nowe selektory
+      'span[data-testid="location-name"]',
+      'div.css-1k19e3g',  // sprawdź aktualną klasę na stronie
+      'div.css-1hilq0k'   // sprawdź aktualną klasę na stronie
+    ];
+
     for (const selector of locationSelectors) {
-      const locationText = $(selector).contents().first().text().trim();
-      if (locationText) {
-        location = locationText;
+      const locationElement = $(selector);
+      if (locationElement.length) {
+        location = locationElement.text().trim();
+        console.log(`Znaleziono lokalizację używając selektora ${selector}:`, location);
         break;
       }
     }
-    // Jeśli nie znaleziono lokalizacji, spróbuj wyciągnąć z breadcrumbs
+
+    // Jeśli nie znaleziono lokalizacji standardowymi selektorami, szukamy w breadcrumbs
     if (!location) {
-      const breadcrumbs = $('.css-1qz6y2l').map((_, el) => $(el).text().trim()).get();
+      const breadcrumbs = $('ul[aria-label="breadcrumb"] li').map((_, el) => $(el).text().trim()).get();
       if (breadcrumbs.length >= 3) {
         location = breadcrumbs.slice(-3).join(', ');
-      } else {
-        location = 'Krotoszyn, krotoszyński, wielkopolskie'; // wartość domyślna
+        console.log('Znaleziono lokalizację w breadcrumbs:', location);
       }
     }
-    console.log('Znaleziona lokalizacja:', location);
 
-    // Pokoje
-    const roomsText = $('.css-58w8b7').contents().text().match(/(\d+)\+?\s*poko/);
-    const rooms = roomsText ? parseInt(roomsText[1]) : 10;
-    console.log('Znaleziona liczba pokoi:', rooms);
-
-    // Powierzchnia działki
-    const plotAreaSelectors = [
-      '.css-t7cajz',
-      'div:contains("Powierzchnia działki")',
-      'div:contains("Działka")'
-    ];
-    let plotArea = 447; // wartość domyślna
-    for (const selector of plotAreaSelectors) {
-      const plotAreaText = $(selector).contents().first().text().match(/(\d+)\s*m²/);
-      if (plotAreaText) {
-        plotArea = parseInt(plotAreaText[1]);
-        break;
-      }
+    // Fallback: szukamy tekstu lokalizacji w całej stronie
+    if (!location) {
+      $('div').each((_, el) => {
+        const text = $(el).text();
+        if (text.includes('województwo') || text.includes('powiat')) {
+          location = text.trim();
+          console.log('Znaleziono lokalizację w tekście:', location);
+          return false; // przerwij iterację
+        }
+      });
     }
-    console.log('Znaleziona powierzchnia działki:', plotArea);
 
-    // Opis
-    const description = $('[data-cy="adPageDescription"]').contents().text().trim() ||
-                       $('div.css-1qz6y2l').contents().text().trim() ||
-                       '';
-    console.log('Znaleziony opis (fragment):', description.substring(0, 100));
+    // Pozostałe dane...
+    const title = $('h1').first().text().trim() ||
+                 $('[data-cy="adPageHeader"]').text().trim();
+
+    const priceText = $('[aria-label="Cena"]').first().text().trim() ||
+                     $('[data-cy="adPageHeaderPrice"]').first().text().trim();
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+
+    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
+                    $('div:contains("Powierzchnia")').next().text().trim();
+    const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
+
+    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
+                     $('div:contains("Liczba pokoi")').next().text().trim();
+    const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
+
+    const description = $('[data-cy="adPageDescription"]').first().text().trim();
 
     const result = {
       title,
       price,
       area,
       rooms,
-      location,
-      plotArea,
-      description,
+      location: location || '',  // jeśli nie znaleziono, zostaw puste pole
+      description: description || '',
       sourceUrl: url,
       source: 'otodom'
     };
@@ -338,13 +310,13 @@ async function scrapeOtodom(url) {
 
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
+    // W przypadku błędu zwracamy podstawową strukturę z pustymi polami
     return {
-      title: 'Dochodowy budynek z 3 niezależnymi mieszkaniami',
-      price: 710000,
-      area: 240,
-      rooms: 10,
-      location: 'Krotoszyn, krotoszyński, wielkopolskie',
-      plotArea: 447,
+      title: url.split('/').pop(),
+      price: null,
+      area: null,
+      rooms: null,
+      location: '',
       description: '',
       sourceUrl: url,
       source: 'otodom'
