@@ -222,43 +222,79 @@ app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
 });
 
-// Rejestracja
+// Endpoint do rejestracji z lepszym logowaniem i obsługą błędów
 app.post('/api/auth/register', async (req, res) => {
+  console.log('Otrzymano request rejestracji:', {
+    email: req.body.email,
+    hasPassword: !!req.body.password,
+    hasName: !!req.body.name
+  });
+
   try {
     const { email, password, name } = req.body;
-    
+
+    // Walidacja danych wejściowych
+    if (!email || !password) {
+      console.log('Brak wymaganych pól');
+      return res.status(400).json({ 
+        error: 'Email i hasło są wymagane',
+        fields: {
+          email: !email,
+          password: !password
+        }
+      });
+    }
+
+    // Sprawdzenie czy użytkownik już istnieje
+    console.log('Sprawdzanie istniejącego użytkownika...');
     const existingUser = await User.findOne({ email });
     if (existingUser) {
+      console.log('Znaleziono istniejącego użytkownika z tym emailem');
       return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
     }
 
+    // Hashowanie hasła
+    console.log('Hashowanie hasła...');
     const hashedPassword = await bcrypt.hash(password, 10);
-    
+
+    // Tworzenie nowego użytkownika
+    console.log('Tworzenie nowego użytkownika...');
     const user = new User({
       email,
       password: hashedPassword,
-      name
+      name: name || email.split('@')[0] // używamy części emaila jako nazwy jeśli nie podano
     });
 
+    // Zapisywanie użytkownika
+    console.log('Zapisywanie użytkownika...');
     await user.save();
 
+    // Tworzenie domyślnej tablicy
+    console.log('Tworzenie domyślnej tablicy...');
     const defaultBoard = new Board({
       name: 'Moja tablica',
       owner: user._id,
       isPrivate: true
     });
 
+    // Zapisywanie tablicy
+    console.log('Zapisywanie tablicy...');
     await defaultBoard.save();
 
+    // Aktualizacja użytkownika o tablicę
+    console.log('Aktualizacja użytkownika o tablicę...');
     user.boards.push(defaultBoard._id);
     await user.save();
 
+    // Generowanie tokena
+    console.log('Generowanie tokena JWT...');
     const token = jwt.sign(
       { userId: user._id },
       process.env.JWT_SECRET,
       { expiresIn: '24h' }
     );
 
+    console.log('Rejestracja zakończona sukcesem');
     res.status(201).json({
       token,
       user: {
@@ -268,7 +304,42 @@ app.post('/api/auth/register', async (req, res) => {
       }
     });
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Błąd podczas rejestracji:', {
+      message: error.message,
+      stack: error.stack,
+      name: error.name
+    });
+
+    // Sprawdzanie konkretnych typów błędów
+    if (error.name === 'MongoError' || error.name === 'MongoServerError') {
+      if (error.code === 11000) {
+        return res.status(400).json({ 
+          error: 'Użytkownik z tym emailem już istnieje',
+          details: 'duplicate_key'
+        });
+      }
+    }
+
+    if (error.name === 'ValidationError') {
+      return res.status(400).json({ 
+        error: 'Nieprawidłowe dane',
+        details: Object.values(error.errors).map(err => err.message)
+      });
+    }
+
+    // Sprawdź połączenie z bazą danych
+    if (!mongoose.connection.readyState) {
+      console.error('Brak połączenia z bazą danych');
+      return res.status(500).json({ 
+        error: 'Problem z połączeniem do bazy danych',
+        details: 'database_connection_error'
+      });
+    }
+
+    res.status(500).json({ 
+      error: 'Wystąpił błąd podczas rejestracji',
+      details: error.message
+    });
   }
 });
 
