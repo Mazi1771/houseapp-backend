@@ -129,15 +129,19 @@ const BoardSchema = new mongoose.Schema({
 });
 
 // Schemat nieruchomości
+const PriceHistorySchema = new mongoose.Schema({
+  price: { type: Number, required: true },
+  date: { type: Date, default: Date.now }
+});
+
 const PropertySchema = new mongoose.Schema({
   title: String,
   price: { type: Number, default: null, required: false },
+  priceHistory: [PriceHistorySchema], // Dodane pole historii cen
   area: { type: Number, default: null, required: false },
-  plotArea: { type: Number, default: null, required: false }, // powierzchnia działki
+  plotArea: { type: Number, default: null, required: false },
   rooms: { type: Number, default: null, required: false },
   location: { type: String, default: '' },
-  city: { type: String, default: '' }, // miasto
-  district: { type: String, default: '' }, // dzielnica/okolica
   description: { type: String, default: '' },
   status: {
     type: String,
@@ -149,10 +153,11 @@ const PropertySchema = new mongoose.Schema({
     enum: ['favorite', 'interested', 'not_interested', null],
     default: null
   },
+  isActive: { type: Boolean, default: true }, // Dodane pole aktywności
+  lastChecked: { type: Date, default: Date.now }, // Dodane pole ostatniego sprawdzenia
   details: { type: Object, default: {} },
   source: String,
   sourceUrl: String,
-  propertyType: { type: String, default: '' }, // typ nieruchomości (dom/mieszkanie)
   board: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Board',
@@ -577,25 +582,36 @@ app.get('/api/properties', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
   try {
-    const property = await Property.findOneAndUpdate(
-      {
-        _id: req.params.id,
-        board: { $in: req.user.boards }
-      },
-      {
-        ...req.body,
-        updatedAt: Date.now(),
-        edited: true
-      },
-      { new: true }
-    );
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
 
     if (!property) {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
+    // Jeśli cena się zmienia, dodaj starą cenę do historii
+    if (req.body.price && req.body.price !== property.price) {
+      if (!property.priceHistory) {
+        property.priceHistory = [];
+      }
+      property.priceHistory.push({
+        price: property.price,
+        date: new Date()
+      });
+    }
+
+    // Aktualizuj właściwości
+    Object.assign(property, req.body, {
+      updatedAt: Date.now(),
+      edited: true
+    });
+
+    await property.save();
     res.json(property);
   } catch (error) {
+    console.error('Błąd podczas aktualizacji:', error);
     res.status(500).json({ error: error.message });
   }
 });
@@ -623,7 +639,39 @@ app.delete('/api/properties/:id', auth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Endpoint do pobierania historii cen
+app.get('/api/properties/:id/price-history', auth, async (req, res) => {
+  try {
+    console.log('Pobieranie historii cen dla ID:', req.params.id);
+    
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
 
+    if (!property) {
+      console.log('Nie znaleziono nieruchomości');
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    // Przygotuj historię cen
+    const priceHistory = [
+      // Dodaj pierwotną cenę jako pierwszy punkt
+      {
+        price: property.price,
+        date: property.createdAt
+      },
+      // Dodaj pozostałe punkty z historii
+      ...(property.priceHistory || [])
+    ];
+
+    console.log('Historia cen:', priceHistory);
+    res.json(priceHistory);
+  } catch (error) {
+    console.error('Błąd podczas pobierania historii cen:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
 const port = process.env.PORT || 10000;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
