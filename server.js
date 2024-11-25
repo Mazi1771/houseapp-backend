@@ -7,14 +7,17 @@ const axios = require('axios');
 const cheerio = require('cheerio');
 
 const app = express();
-app.use(cors());
+
+// Konfiguracja CORS
+app.use(cors({
+  origin: ['https://houseapp-uhmg.vercel.app', 'http://localhost:3000'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  credentials: true
+}));
 app.use(express.json());
-
-mongoose.connect(process.env.MONGODB_URI, {
-  useNewUrlParser: true,
-  useUnifiedTopology: true
-});
-
+// Test dla preflight requests
+app.options('*', cors());
 // Schemat użytkownika
 const UserSchema = new mongoose.Schema({
   email: { type: String, required: true, unique: true },
