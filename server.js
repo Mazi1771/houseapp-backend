@@ -5,7 +5,7 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const cheerio = require('cheerio');
-
+const cron = require('node-cron'); 
 const app = express();
 
 // Lista dozwolonych origin'ów
@@ -696,6 +696,19 @@ app.get('/api/properties/:id/price-history', auth, async (req, res) => {
   }
 });
 const port = process.env.PORT || 10000;
+
+if (cron) {
+  cron.schedule('0 3 * * *', () => {
+    console.log('Rozpoczynam zaplanowaną aktualizację cen...');
+    updatePropertyPrices();
+  });
+}
+
+const port = process.env.PORT || 10000;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Serwer działa na porcie ${port}`);
+});
+
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
 cron.schedule('0 3 * * *', () => {
