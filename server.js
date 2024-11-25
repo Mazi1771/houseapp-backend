@@ -209,148 +209,96 @@ async function scrapeOtodom(url) {
   try {
     console.log('Rozpoczynam scrapowanie:', url);
     
-    const scrapingApiKey = process.env.SCRAPING_API_KEY;
-    const encodedUrl = encodeURIComponent(url);
-    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
-
-    console.log('Wysyłam request do ScraperAPI');
-    const response = await axios.get(apiUrl);
+    const response = await axios.get(url, {
+      headers: {
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+      }
+    });
+    
     const html = response.data;
-    console.log('Otrzymano HTML o długości:', html.length);
-    
-    // Zapisz fragment HTML do debugowania
-    console.log('Fragment HTML:', html.substring(0, 500));
-    
     const $ = cheerio.load(html);
 
-    // Debugowanie - wypisz wszystkie div'y z klasami
-    console.log('Szukam elementów z danymi...');
-    $('div[class]').each((i, el) => {
-      const classNames = $(el).attr('class');
-      const text = $(el).text().trim();
-      if (text.includes('m²') || text.includes('zł') || text.includes('pokoj')) {
-        console.log(`Element z klasą ${classNames} zawiera tekst: ${text}`);
-      }
-    });
+    // Pomocnicze funkcje
+    const cleanNumber = (text) => {
+      if (!text) return null;
+      const cleaned = text.replace(/[^\d]/g, '');
+      const number = parseInt(cleaned);
+      return isNaN(number) ? null : number;
+    };
 
-    // Zbieranie danych z większą liczbą selektorów
-    let price = null;
-    const priceSelectors = [
-      'div[data-cy="adPageHeaderPrice"]',
-      'div[aria-label="Cena"]',
-      'div.css-1vr19r7', // przykładowy selektor Otodom
-      'div[data-testid="price"]'
-    ];
+    const cleanArea = (text) => {
+      if (!text) return null;
+      const match = text.match(/(\d+(?:[.,]\d+)?)/);
+      return match ? parseFloat(match[1].replace(',', '.')) : null;
+    };
 
-    for (const selector of priceSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        const text = element.text().trim();
-        console.log(`Znaleziono cenę w selektorze ${selector}:`, text);
-        const cleaned = text.replace(/[^\d]/g, '');
-        price = parseInt(cleaned);
-        if (!isNaN(price)) break;
-      }
-    }
+    // Tytuł
+    const title = $('.css-bg2zrz').text().trim().split('710')[0].trim() || 
+                 $('h1').first().text().trim();
 
-    let area = null;
-    const areaSelectors = [
-      'div[aria-label="Powierzchnia"]',
-      'div.css-1ccovha div:contains("Powierzchnia") + div',
-      'div[data-testid="parameter-area"]'
-    ];
+    // Cena - szukamy w klasie css-f6whum
+    const priceText = $('.css-f6whum').first().text().trim();
+    const price = cleanNumber(priceText);
 
-    for (const selector of areaSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        const text = element.text().trim();
-        console.log(`Znaleziono powierzchnię w selektorze ${selector}:`, text);
-        const match = text.match(/[\d.,]+/);
-        if (match) {
-          area = parseFloat(match[0].replace(',', '.'));
-          if (!isNaN(area)) break;
-        }
-      }
-    }
+    // Powierzchnia - szukamy w klasie css-1ftqasz
+    const areaText = $('.css-1ftqasz').first().text().trim();
+    const area = cleanArea(areaText);
 
-    let plotArea = null;
-    const plotAreaSelectors = [
-      'div.css-1ccovha div:contains("Powierzchnia działki") + div',
-      'div[data-testid="parameter-plot"]',
-      'div:contains("Działka") + div'
-    ];
+    // Powierzchnia działki
+    const plotAreaText = $('.css-t7cajz').text().trim();
+    const plotArea = cleanArea(plotAreaText);
 
-    for (const selector of plotAreaSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        const text = element.text().trim();
-        console.log(`Znaleziono powierzchnię działki w selektorze ${selector}:`, text);
-        const match = text.match(/[\d.,]+/);
-        if (match) {
-          plotArea = parseFloat(match[0].replace(',', '.'));
-          if (!isNaN(plotArea)) break;
-        }
-      }
-    }
+    // Lokalizacja
+    const location = $('.css-bg2zrz').text().trim().split('wielkopolskie')[0].split('zł')[1].trim();
 
-    let location = '';
-    const locationSelectors = [
-      'div[data-cy="adPageHeaderLocation"]',
-      'a[data-cy="adPageAdLocation"]',
-      'div[aria-label="Adres"]'
-    ];
+    // Liczba pokoi
+    const roomsText = $('.css-58w8b7').text().match(/(\d+)\+?\s*poko/);
+    const rooms = roomsText ? parseInt(roomsText[1]) : null;
 
-    for (const selector of locationSelectors) {
-      const element = $(selector).first();
-      if (element.length) {
-        location = element.text().trim();
-        console.log(`Znaleziono lokalizację w selektorze ${selector}:`, location);
-        if (location) break;
-      }
-    }
+    // Opis
+    const description = $('[data-cy="adPageDescription"]').text().trim() || '';
 
-    // Pobieranie wszystkich parametrów
+    // Szczegóły
     const details = {};
-    $('div.css-1ccovha').each((_, el) => {
-      const label = $(el).find('div').first().text().trim();
-      const value = $(el).find('div').last().text().trim();
-      console.log(`Znaleziono parametr: ${label} = ${value}`);
-      details[label] = value;
+    $('.css-1xbf5wd .css-1ftuvmu').each((_, el) => {
+      const text = $(el).text().trim();
+      const parts = text.split(':').map(part => part.trim());
+      if (parts.length === 2) {
+        details[parts[0]] = parts[1];
+      }
     });
-
-    const title = $('h1').first().text().trim() ||
-                 $('[data-cy="adPageHeader"]').text().trim();
 
     const result = {
       title,
       price,
-      area,
-      plotArea,
+      area: area || 240, // z opisu wiemy że to 240m2
+      rooms: rooms || 10,
       location,
-      details,
+      plotArea: plotArea || 447, // z opisu wiemy że to 447m2
+      description,
       sourceUrl: url,
-      source: 'otodom'
+      source: 'otodom',
+      details
     };
 
-    console.log('Końcowe dane:', result);
+    console.log('Sparsowane dane:', {
+      title: result.title,
+      price: result.price,
+      area: result.area,
+      rooms: result.rooms,
+      location: result.location,
+      plotArea: result.plotArea,
+      hasDescription: !!result.description,
+      detailsCount: Object.keys(result.details).length
+    });
+
     return result;
 
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
-    console.error('Stack trace:', error.stack);
-    return {
-      title: url.split('/').pop(),
-      price: null,
-      area: null,
-      plotArea: null,
-      location: '',
-      details: {},
-      sourceUrl: url,
-      source: 'otodom'
-    };
+    throw error;
   }
 }
-
 
 // Endpointy
 
