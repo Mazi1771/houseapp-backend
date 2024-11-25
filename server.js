@@ -130,9 +130,9 @@ const BoardSchema = new mongoose.Schema({
 // Schemat nieruchomości
 const PropertySchema = new mongoose.Schema({
   title: String,
-  price: { type: Number, default: null },
-  area: { type: Number, default: null },
-  rooms: { type: Number, default: null },
+  price: { type: Number, default: null, required: false },
+  area: { type: Number, default: null, required: false },
+  rooms: { type: Number, default: null, required: false },
   location: { type: String, default: '' },
   description: { type: String, default: '' },
   status: {
@@ -157,7 +157,6 @@ const PropertySchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
-
 const User = mongoose.model('User', UserSchema);
 const Board = mongoose.model('Board', BoardSchema);
 const Property = mongoose.model('Property', PropertySchema);
@@ -218,80 +217,84 @@ async function scrapeOtodom(url) {
     console.log('HTML załadowany, parsowanie danych...');
 
     // Funkcja pomocnicza do bezpiecznego parsowania liczb
-    const safeParseFloat = (text) => {
-      if (!text) return null;
-      const match = text.match(/[\d.,]+/);
-      if (!match) return null;
-      const number = parseFloat(match[0].replace(',', '.'));
-      return isNaN(number) ? null : number;
+    const safeParseNumber = (text, type = 'float') => {
+      try {
+        if (!text) return null;
+        const match = text.match(/[\d.,]+/);
+        if (!match) return null;
+        const number = type === 'float' 
+          ? parseFloat(match[0].replace(',', '.'))
+          : parseInt(match[0]);
+        return isNaN(number) ? null : number;
+      } catch (e) {
+        console.log(`Błąd parsowania liczby: ${text}`, e);
+        return null;
+      }
     };
 
-    const safeParseInt = (text) => {
-      if (!text) return null;
-      const match = text.match(/\d+/);
-      if (!match) return null;
-      const number = parseInt(match[0]);
-      return isNaN(number) ? null : number;
-    };
-
-    // Pobieranie danych z różnymi selektorami
+    // Pobieranie danych
     const title = $('[data-cy="adPageHeader"]').text().trim() || 
                  $('h1').first().text().trim() || 
-                 'Brak tytułu';
+                 url.split('/').pop(); // użyj części URL jako fallback
 
-    console.log('Tytuł:', title);
-
-    // Cena
     const priceText = $('[aria-label="Cena"]').first().text().trim() || 
                      $('[data-cy="adPageHeaderPrice"]').first().text().trim();
-    const price = safeParseInt(priceText);
-    console.log('Cena tekst:', priceText, 'Sparsowana:', price);
+    const price = safeParseNumber(priceText, 'int');
 
-    // Powierzchnia
     const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
                     $('div:contains("Powierzchnia")').next().text().trim() ||
                     $('div:contains("powierzchnia")').next().text().trim();
-    const area = safeParseFloat(areaText);
-    console.log('Powierzchnia tekst:', areaText, 'Sparsowana:', area);
+    const area = safeParseNumber(areaText, 'float');
 
-    // Pokoje
     const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
                      $('div:contains("Liczba pokoi")').next().text().trim() ||
                      $('div:contains("pokoje")').next().text().trim();
-    const rooms = safeParseInt(roomsText);
-    console.log('Pokoje tekst:', roomsText, 'Sparsowane:', rooms);
+    const rooms = safeParseNumber(roomsText, 'int');
 
-    // Lokalizacja
     const location = $('[aria-label="Adres"]').first().text().trim() ||
                     $('[data-cy="adPageHeaderLocation"]').first().text().trim() ||
                     '';
-    console.log('Lokalizacja:', location);
 
-    // Opis
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('.eo9qioj1').first().text().trim() ||
                        '';
-    console.log('Opis (fragment):', description.substring(0, 100) + '...');
 
-    const result = {
-      title: title || null,
+    // Log dla debugowania
+    console.log('Sparsowane wartości:', {
+      title,
+      price,
+      area,
+      rooms,
+      hasLocation: !!location,
+      hasDescription: !!description
+    });
+
+    return {
+      title,
       price: price || null,
       area: area || null,
       rooms: rooms || null,
-      location: location || null,
-      description: description || null,
+      location: location || '',
+      description: description || '',
       sourceUrl: url,
       source: 'otodom'
     };
-
-    console.log('Sparsowane dane:', result);
-    return result;
   } catch (error) {
-    console.error('Błąd podczas scrapowania:', error.message);
-    console.error('Stack trace:', error.stack);
-    throw new Error(`Nie udało się pobrać danych z Otodom: ${error.message}`);
+    console.error('Błąd podczas scrapowania:', error);
+    // Zwróć podstawowe dane nawet w przypadku błędu
+    return {
+      title: url.split('/').pop(),
+      price: null,
+      area: null,
+      rooms: null,
+      location: '',
+      description: '',
+      sourceUrl: url,
+      source: 'otodom'
+    };
   }
 }
+
 
 // Endpointy
 
@@ -459,9 +462,6 @@ app.post('/api/auth/login', async (req, res) => {
 app.post('/api/scrape', auth, async (req, res) => {
   try {
     const { url } = req.body;
-    console.log('Otrzymany URL:', url);
-    
-    // Sprawdzenie czy URL jest prawidłowy
     if (!url) {
       return res.status(400).json({ error: 'URL jest wymagany' });
     }
@@ -470,111 +470,69 @@ app.post('/api/scrape', auth, async (req, res) => {
       return res.status(400).json({ error: 'URL musi być z serwisu Otodom' });
     }
 
-    // Sprawdzenie klucza API
-    const scrapingApiKey = process.env.SCRAPING_API_KEY;
-    if (!scrapingApiKey) {
-      console.error('Brak klucza API');
-      return res.status(500).json({ error: 'Błąd konfiguracji serwera' });
-    }
-
-    // Pobieranie tablicy użytkownika
-    console.log('Szukam tablicy użytkownika:', req.user._id);
     const defaultBoard = await Board.findOne({ owner: req.user._id });
     if (!defaultBoard) {
-      console.error('Nie znaleziono tablicy dla użytkownika:', req.user._id);
       return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
     }
 
-    console.log('Rozpoczynam scrapowanie...');
-    const encodedUrl = encodeURIComponent(url);
-    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
+    const scrapedData = await scrapeOtodom(url);
+    console.log('Dane ze scrapera:', scrapedData);
 
-    // Wykonanie requestu do ScraperAPI
-    console.log('Wysyłam request do ScraperAPI...');
-    const response = await axios.get(apiUrl, {
-      timeout: 60000, // 60 sekund timeout
-      headers: {
-        'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
-      }
-    });
-
-    if (!response.data) {
-      console.error('Brak danych w odpowiedzi');
-      return res.status(500).json({ error: 'Nie udało się pobrać danych ze strony' });
-    }
-
-    const $ = cheerio.load(response.data);
-    console.log('HTML załadowany, parsowanie danych...');
-
-    // Parsowanie danych
-    const title = $('[data-cy="adPageHeader"]').text().trim() || $('h1').first().text().trim();
-    if (!title) {
-      console.error('Nie znaleziono tytułu');
-      return res.status(500).json({ error: 'Nie udało się sparsować danych ze strony' });
-    }
-
-    const priceText = $('[aria-label="Cena"]').first().text().trim() || 
-                     $('[data-cy="adPageHeaderPrice"]').first().text().trim();
-    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
-
-    const areaText = $('[aria-label="Powierzchnia"]').first().text().trim() ||
-                    $('div:contains("Powierzchnia")').next().text().trim();
-    const area = areaText ? parseFloat(areaText.match(/[\d.,]+/)[0].replace(',', '.')) : null;
-
-    const roomsText = $('[aria-label="Liczba pokoi"]').first().text().trim() ||
-                     $('div:contains("Liczba pokoi")').next().text().trim();
-    const rooms = roomsText ? parseInt(roomsText.match(/\d+/)[0]) : null;
-
-    const location = $('[aria-label="Adres"]').first().text().trim() ||
-                    $('[data-cy="adPageHeaderLocation"]').first().text().trim();
-
-    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
-                       $('.eo9qioj1').first().text().trim();
-
-    const scrapedData = {
-      title,
-      price,
-      area,
-      rooms,
-      location,
-      description: description || '',
-      sourceUrl: url,
-      source: 'otodom'
-    };
-
-    console.log('Dane sparsowane:', scrapedData);
-
-    // Zapisywanie do bazy
-    console.log('Tworzenie nowej nieruchomości...');
     const property = new Property({
       ...scrapedData,
       board: defaultBoard._id,
-      status: 'wybierz'
+      status: 'wybierz',
+      edited: false
     });
 
     await property.save();
-    console.log('Nieruchomość zapisana, ID:', property._id);
-
-    // Aktualizacja tablicy
     defaultBoard.properties.push(property._id);
     await defaultBoard.save();
-    console.log('Tablica zaktualizowana');
 
     res.json(property);
   } catch (error) {
-    console.error('Szczegóły błędu:', {
-      message: error.message,
-      stack: error.stack,
-      response: error.response?.data
-    });
-
-    // Bardziej szczegółowa odpowiedź błędu
+    console.error('Błąd podczas zapisywania:', error);
     res.status(500).json({
       error: 'Wystąpił błąd podczas pobierania danych',
-      details: error.message,
-      type: error.name,
-      statusCode: error.response?.status
+      details: error.message
+    });
+  }
+});app.post('/api/scrape', auth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    if (!url) {
+      return res.status(400).json({ error: 'URL jest wymagany' });
+    }
+
+    if (!url.includes('otodom.pl')) {
+      return res.status(400).json({ error: 'URL musi być z serwisu Otodom' });
+    }
+
+    const defaultBoard = await Board.findOne({ owner: req.user._id });
+    if (!defaultBoard) {
+      return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
+    }
+
+    const scrapedData = await scrapeOtodom(url);
+    console.log('Dane ze scrapera:', scrapedData);
+
+    const property = new Property({
+      ...scrapedData,
+      board: defaultBoard._id,
+      status: 'wybierz',
+      edited: false
+    });
+
+    await property.save();
+    defaultBoard.properties.push(property._id);
+    await defaultBoard.save();
+
+    res.json(property);
+  } catch (error) {
+    console.error('Błąd podczas zapisywania:', error);
+    res.status(500).json({
+      error: 'Wystąpił błąd podczas pobierania danych',
+      details: error.message
     });
   }
 });
