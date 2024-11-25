@@ -1,4 +1,4 @@
-const express = require('express');
+iconst express = require('express');
 const cors = require('cors');
 const mongoose = require('mongoose');
 const bcrypt = require('bcryptjs');
@@ -707,9 +707,6 @@ const port = process.env.PORT || 10000;
 app.listen(port, '0.0.0.0', () => {
   console.log(`Serwer działa na porcie ${port}`);
 });
-
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Serwer działa na porcie ${port}`);
 cron.schedule('0 3 * * *', () => {
   console.log('Rozpoczynam zaplanowaną aktualizację cen...');
   updatePropertyPrices();
