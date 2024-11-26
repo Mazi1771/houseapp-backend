@@ -742,42 +742,61 @@ app.delete('/api/properties/:id', auth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// Endpoint do pobierania historii cen
-app.get('/api/properties/:id/price-history', auth, async (req, res) => {
+// Aktualizacja cen
+app.post('/api/update-prices', auth, async (req, res) => {
   try {
-    console.log('Pobieranie historii cen dla ID:', req.params.id);
-    
-    const property = await Property.findOne({
-      _id: req.params.id,
-      board: { $in: req.user.boards }
+    console.log('Rozpoczynam ręczną aktualizację cen...');
+    const properties = await Property.find({
+      sourceUrl: { $exists: true, $ne: '' }
     });
 
-    if (!property) {
-      console.log('Nie znaleziono nieruchomości');
-      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    const updates = [];
+    for (const property of properties) {
+      try {
+        console.log(`Sprawdzam aktualizację dla: ${property.title}`);
+        const scrapedData = await scrapeOtodom(property.sourceUrl);
+        
+        if (scrapedData.price && scrapedData.price !== property.price) {
+          console.log(`Znaleziono nową cenę dla ${property.title}: ${scrapedData.price} (było: ${property.price})`);
+          
+          // Dodaj starą cenę do historii
+          if (!property.priceHistory) property.priceHistory = [];
+          property.priceHistory.push({
+            price: property.price,
+            date: new Date()
+          });
+
+          // Aktualizuj cenę
+          property.price = scrapedData.price;
+          property.lastChecked = new Date();
+          await property.save();
+          
+          updates.push({
+            id: property._id,
+            title: property.title,
+            oldPrice: property.price,
+            newPrice: scrapedData.price
+          });
+        }
+      } catch (error) {
+        console.error(`Błąd podczas aktualizacji ${property.title}:`, error);
+      }
     }
 
-    // Przygotuj historię cen
-    const priceHistory = [
-      // Dodaj pierwotną cenę jako pierwszy punkt
-      {
-        price: property.price,
-        date: property.createdAt
-      },
-      // Dodaj pozostałe punkty z historii
-      ...(property.priceHistory || [])
-    ];
-
-    console.log('Historia cen:', priceHistory);
-    res.json(priceHistory);
+    console.log(`Zakończono aktualizację. Zaktualizowano ${updates.length} ogłoszeń`);
+    res.json({ 
+      success: true, 
+      updatedCount: updates.length,
+      updates 
+    });
   } catch (error) {
-    console.error('Błąd podczas pobierania historii cen:', error);
-    res.status(500).json({ error: error.message });
+    console.error('Błąd podczas aktualizacji cen:', error);
+    res.status(500).json({ error: 'Błąd podczas aktualizacji cen' });
   }
 });
 
+// Zadanie cron do automatycznej aktualizacji cen
 if (cron) {
-  // Uruchamiaj o 00:05 każdego dnia (5 minut po północy)
   cron.schedule('5 0 * * *', async () => {
     try {
       console.log('Rozpoczynam zaplanowaną aktualizację cen...');
@@ -816,3 +835,38 @@ if (cron) {
     }
   });
 }
+
+// Historia cen
+app.get('/api/properties/:id/price-history', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const priceHistory = [
+      // Dodaj pierwotną cenę jako pierwszy punkt
+      {
+        price: property.price,
+        date: property.createdAt
+      },
+      // Dodaj pozostałe punkty z historii
+      ...(property.priceHistory || [])
+    ];
+
+    res.json(priceHistory);
+  } catch (error) {
+    console.error('Błąd podczas pobierania historii cen:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Uruchomienie serwera
+const port = process.env.PORT || 10000;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Serwer działa na porcie ${port}`);
+});
