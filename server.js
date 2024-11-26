@@ -234,48 +234,105 @@ async function scrapeOtodom(url) {
     const html = response.data;
     const $ = cheerio.load(html);
 
-    // Pobieranie lokalizacji - sprawdzamy różne możliwe selektory
-    let location = '';
-    const locationSelectors = [
-      '[data-cy="adPageHeaderLocation"]',
-      'header [aria-label="Adres"]',
-      'div[data-testid="ad-header-location"]',
-      // Nowe selektory
-      'span[data-testid="location-name"]',
-      'div.css-1k19e3g',  // sprawdź aktualną klasę na stronie
-      'div.css-1hilq0k'   // sprawdź aktualną klasę na stronie
-    ];
+    // Debug: Zapisz wszystkie dane z parametrów
+    let allParameters = {};
+    $('.css-1ccovha').each((_, element) => {
+      const label = $(element).find('div:first-child').text().trim();
+      const value = $(element).find('div:last-child').text().trim();
+      allParameters[label] = value;
+      console.log(`Znaleziono parametr: ${label} = ${value}`);
+    });
 
-    for (const selector of locationSelectors) {
-      const locationElement = $(selector);
-      if (locationElement.length) {
-        location = locationElement.text().trim();
-        console.log(`Znaleziono lokalizację używając selektora ${selector}:`, location);
-        break;
+    // Tytuł
+    const title = $('h1').first().text().trim();
+    console.log('Tytuł:', title);
+
+    // Cena - szukamy w różnych miejscach
+    let priceText = '';
+    ['[data-cy="adPageHeaderPrice"]', '[aria-label="Cena"]', '.css-8qi9av'].forEach(selector => {
+      if (!priceText) {
+        priceText = $(selector).first().text().trim();
       }
-    }
+    });
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+    console.log('Znaleziona cena:', price, 'z tekstu:', priceText);
 
-    // Jeśli nie znaleziono lokalizacji standardowymi selektorami, szukamy w breadcrumbs
-    if (!location) {
-      const breadcrumbs = $('ul[aria-label="breadcrumb"] li').map((_, el) => $(el).text().trim()).get();
-      if (breadcrumbs.length >= 3) {
-        location = breadcrumbs.slice(-3).join(', ');
-        console.log('Znaleziono lokalizację w breadcrumbs:', location);
-      }
-    }
-
-    // Fallback: szukamy tekstu lokalizacji w całej stronie
-    if (!location) {
-      $('div').each((_, el) => {
-        const text = $(el).text();
-        if (text.includes('województwo') || text.includes('powiat')) {
-          location = text.trim();
-          console.log('Znaleziono lokalizację w tekście:', location);
-          return false; // przerwij iterację
+    // Powierzchnia
+    let area = null;
+    const areaRegex = /(\d+(?:[,.]\d+)?)\s*m²/;
+    Object.entries(allParameters).forEach(([key, value]) => {
+      if (key.toLowerCase().includes('powierzchnia') && !key.toLowerCase().includes('działki')) {
+        const match = value.match(areaRegex);
+        if (match) {
+          area = parseFloat(match[1].replace(',', '.'));
         }
-      });
-    }
+      }
+    });
+    console.log('Znaleziona powierzchnia:', area);
 
+    // Pokoje
+    let rooms = null;
+    Object.entries(allParameters).forEach(([key, value]) => {
+      if (key.toLowerCase().includes('liczba pokoi')) {
+        const match = value.match(/\d+/);
+        if (match) {
+          rooms = parseInt(match[0]);
+        }
+      }
+    });
+    console.log('Znalezione pokoje:', rooms);
+
+    // Lokalizacja
+    let location = '';
+    const locationElements = [
+      '[data-testid="location-name"]',
+      '.css-17o5lod',
+      '[data-testid="ad-header-location"]'
+    ].map(selector => $(selector).first().text().trim()).filter(Boolean);
+
+    if (locationElements.length > 0) {
+      location = locationElements[0];
+    } else {
+      // Próbujemy złożyć lokalizację z breadcrumbów
+      const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
+        .map((_, el) => $(el).text().trim())
+        .get()
+        .filter(text => !text.includes('Ogłoszenia') && !text.includes('Nieruchomości'));
+      
+      if (breadcrumbs.length > 0) {
+        location = breadcrumbs.join(', ');
+      }
+    }
+    console.log('Znaleziona lokalizacja:', location);
+
+    // Opis
+    const description = $('[data-cy="adPageDescription"]').first().text().trim();
+    console.log('Opis (fragment):', description?.substring(0, 100));
+
+    const result = {
+      title: title || '',
+      price,
+      area,
+      rooms,
+      location,
+      description: description || '',
+      sourceUrl: url,
+      source: 'otodom',
+      parameters: allParameters // Zachowujemy wszystkie znalezione parametry do debugowania
+    };
+
+    console.log('Końcowe dane:', result);
+    return result;
+
+  } catch (error) {
+    console.error('Szczegóły błędu:', {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data
+    });
+    throw error;
+  }
+}
     // Pozostałe dane...
     const title = $('h1').first().text().trim() ||
                  $('[data-cy="adPageHeader"]').text().trim();
@@ -324,7 +381,58 @@ async function scrapeOtodom(url) {
   }
 }
 // Endpointy
+// endpoint do ręcznego uruchamiania aktualizacji
+app.post('/api/update-prices', auth, async (req, res) => {
+  try {
+    console.log('Rozpoczynam ręczną aktualizację cen...');
+    const properties = await Property.find({
+      sourceUrl: { $exists: true, $ne: '' }
+    });
 
+    const updates = [];
+    for (const property of properties) {
+      try {
+        console.log(`Sprawdzam aktualizację dla: ${property.title}`);
+        const scrapedData = await scrapeOtodom(property.sourceUrl);
+        
+        if (scrapedData.price && scrapedData.price !== property.price) {
+          console.log(`Znaleziono nową cenę dla ${property.title}: ${scrapedData.price} (było: ${property.price})`);
+          
+          // Dodaj starą cenę do historii
+          if (!property.priceHistory) property.priceHistory = [];
+          property.priceHistory.push({
+            price: property.price,
+            date: new Date()
+          });
+
+          // Aktualizuj cenę
+          property.price = scrapedData.price;
+          property.lastChecked = new Date();
+          await property.save();
+          
+          updates.push({
+            id: property._id,
+            title: property.title,
+            oldPrice: property.price,
+            newPrice: scrapedData.price
+          });
+        }
+      } catch (error) {
+        console.error(`Błąd podczas aktualizacji ${property.title}:`, error);
+      }
+    }
+
+    console.log(`Zakończono aktualizację. Zaktualizowano ${updates.length} ogłoszeń`);
+    res.json({ 
+      success: true, 
+      updatedCount: updates.length,
+      updates 
+    });
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji cen:', error);
+    res.status(500).json({ error: 'Błąd podczas aktualizacji cen' });
+  }
+});
 // Test API
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
@@ -669,17 +777,42 @@ app.get('/api/properties/:id/price-history', auth, async (req, res) => {
 });
 
 if (cron) {
-  cron.schedule('0 3 * * *', () => {
-    console.log('Rozpoczynam zaplanowaną aktualizację cen...');
-    updatePropertyPrices();
+  // Uruchamiaj o 00:05 każdego dnia (5 minut po północy)
+  cron.schedule('5 0 * * *', async () => {
+    try {
+      console.log('Rozpoczynam zaplanowaną aktualizację cen...');
+      
+      const properties = await Property.find({
+        sourceUrl: { $exists: true, $ne: '' }
+      });
+
+      console.log(`Znaleziono ${properties.length} ogłoszeń do sprawdzenia`);
+
+      for (const property of properties) {
+        try {
+          const scrapedData = await scrapeOtodom(property.sourceUrl);
+          
+          if (scrapedData.price && scrapedData.price !== property.price) {
+            console.log(`Aktualizacja ceny dla ${property.title}: ${property.price} -> ${scrapedData.price}`);
+            
+            if (!property.priceHistory) property.priceHistory = [];
+            property.priceHistory.push({
+              price: property.price,
+              date: new Date()
+            });
+
+            property.price = scrapedData.price;
+            property.lastChecked = new Date();
+            await property.save();
+          }
+        } catch (error) {
+          console.error(`Błąd podczas aktualizacji ${property.title}:`, error);
+        }
+      }
+
+      console.log('Zakończono zaplanowaną aktualizację cen');
+    } catch (error) {
+      console.error('Błąd podczas zaplanowanej aktualizacji:', error);
+    }
   });
 }
-
-const port = process.env.PORT || 10000;
-app.listen(port, '0.0.0.0', () => {
-  console.log(`Serwer działa na porcie ${port}`);
-});
-cron.schedule('0 3 * * *', () => {
-  console.log('Rozpoczynam zaplanowaną aktualizację cen...');
-  updatePropertyPrices();
-});
