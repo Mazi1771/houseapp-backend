@@ -219,97 +219,139 @@ async function scrapeOtodom(url) {
     console.log('Rozpoczynam scrapowanie:', url);
     
     const scrapingApiKey = process.env.SCRAPING_API_KEY;
+    if (!scrapingApiKey) {
+      throw new Error('Brak klucza API do scrapingu');
+    }
+
     const encodedUrl = encodeURIComponent(url);
     const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
 
     console.log('Wysyłam request do ScraperAPI');
-    const response = await axios.get(apiUrl);
+    const response = await axios.get(apiUrl, {
+      timeout: 30000,
+      headers: {
+        'Accept-Language': 'pl-PL'
+      }
+    });
+
     const html = response.data;
     const $ = cheerio.load(html);
 
-    // Debug: Zbieranie wszystkich parametrów
+    // Debug: zapisz pierwsze 1000 znaków HTML
+    console.log('Otrzymany HTML:', html.substring(0, 1000));
+
+    // Szukanie parametrów w różnych formatach
+    const parameterContainers = [
+      '.css-1ccovha',    // Stary format
+      '[data-testid="ad-details-table"] > div', // Nowy format
+      '.css-kos6vh',     // Dodatkowy format
+      '.css-1k6nwej'     // Jeszcze jeden format
+    ];
+
     let allParameters = {};
-    $('.css-1ccovha').each((_, element) => {
-      const label = $(element).find('div:first-child').text().trim();
-      const value = $(element).find('div:last-child').text().trim();
-      allParameters[label] = value;
-      console.log(`Znaleziono parametr: ${label} = ${value}`);
+    
+    parameterContainers.forEach(selector => {
+      $(selector).each((_, element) => {
+        // Próbujemy różne struktury
+        let label, value;
+
+        // Struktura 1: div > div (label) + div (value)
+        const divs = $(element).find('div');
+        if (divs.length >= 2) {
+          label = $(divs[0]).text().trim();
+          value = $(divs[1]).text().trim();
+        }
+
+        // Struktura 2: data-testid="table-value" i "table-label"
+        if (!label || !value) {
+          const labelEl = $(element).find('[data-testid="table-label"]');
+          const valueEl = $(element).find('[data-testid="table-value"]');
+          if (labelEl.length && valueEl.length) {
+            label = labelEl.text().trim();
+            value = valueEl.text().trim();
+          }
+        }
+
+        if (label && value) {
+          allParameters[label] = value;
+          console.log(`Znaleziono parametr: ${label} = ${value}`);
+        }
+      });
     });
 
-    // Tytuł
-    const title = $('h1').first().text().trim();
-    console.log('Tytuł:', title);
+    // Szukanie podstawowych informacji
+    const title = $('h1').first().text().trim() ||
+                 $('[data-testid="ad-title"]').first().text().trim() ||
+                 $('[data-cy="adPageHeader"]').first().text().trim();
 
-    // Cena - szukamy w różnych miejscach
+    // Szukanie ceny
     let priceText = '';
-    [
+    const priceSelectors = [
+      '[data-testid="price"]',
       '[data-cy="adPageHeaderPrice"]',
-      '[aria-label="Cena"]',
       '.css-8qi9av',
-      'div[data-testid="price"]'
-    ].forEach(selector => {
-      if (!priceText) {
-        priceText = $(selector).first().text().trim();
-      }
-    });
-    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
-    console.log('Znaleziona cena:', price, 'z tekstu:', priceText);
+      '.css-t3wmkv',
+      '.css-1vr19r7'
+    ];
 
-    // Powierzchnia
+    for (const selector of priceSelectors) {
+      const element = $(selector).first();
+      if (element.length) {
+        priceText = element.text().trim();
+        break;
+      }
+    }
+
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+
+    // Szukanie powierzchni i pokoi w parametrach
     let area = null;
-    const areaRegex = /(\d+(?:[,.]\d+)?)\s*m²/;
+    let rooms = null;
+    let plotArea = null;
+
     Object.entries(allParameters).forEach(([key, value]) => {
-      if (key.toLowerCase().includes('powierzchnia') && !key.toLowerCase().includes('działki')) {
-        const match = value.match(areaRegex);
+      const keyLower = key.toLowerCase();
+      // Powierzchnia
+      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki') && !keyLower.includes('dzialki')) {
+        const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           area = parseFloat(match[1].replace(',', '.'));
         }
       }
-    });
-    console.log('Znaleziona powierzchnia:', area);
-
-    // Powierzchnia działki
-    let plotArea = null;
-    Object.entries(allParameters).forEach(([key, value]) => {
-      if (key.toLowerCase().includes('powierzchnia działki') || key.toLowerCase().includes('działka')) {
-        const match = value.match(areaRegex);
+      // Powierzchnia działki
+      else if (keyLower.includes('działki') || keyLower.includes('dzialki') || keyLower.includes('działka') || keyLower.includes('dzialka')) {
+        const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           plotArea = parseFloat(match[1].replace(',', '.'));
         }
       }
-    });
-    console.log('Znaleziona powierzchnia działki:', plotArea);
-
-    // Pokoje
-    let rooms = null;
-    Object.entries(allParameters).forEach(([key, value]) => {
-      if (key.toLowerCase().includes('liczba pokoi')) {
-        const match = value.match(/\d+/);
+      // Pokoje
+      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje') || keyLower.includes('liczba pokoi')) {
+        const match = value.match(/(\d+)/);
         if (match) {
-          rooms = parseInt(match[0]);
+          rooms = parseInt(match[1]);
         }
       }
     });
-    console.log('Znalezione pokoje:', rooms);
 
-    // Lokalizacja
-    let location = '';
+    // Szukanie lokalizacji
     const locationSelectors = [
       '[data-testid="location-name"]',
-      '.css-17o5lod',
       '[data-testid="ad-header-location"]',
-      '[aria-label="Adres"]',
-      '[data-testid="location"]'
+      '.css-17o5lod',
+      '[aria-label="Adres"]'
     ];
 
-    // Najpierw próbujemy znaleźć lokalizację bezpośrednio
+    let location = '';
     for (const selector of locationSelectors) {
-      if (!location) {
-        location = $(selector).first().text().trim();
+      const element = $(selector).first();
+      if (element.length) {
+        location = element.text().trim();
+        break;
       }
     }
 
-    // Jeśli nie znaleziono, próbujemy z breadcrumbów
+    // Jeśli nie znaleziono lokalizacji w podstawowych selektorach, szukaj w breadcrumbach
     if (!location) {
       const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
         .map((_, el) => $(el).text().trim())
@@ -321,40 +363,28 @@ async function scrapeOtodom(url) {
       }
     }
 
-    // Jeśli nadal nie znaleziono, szukamy w szczegółach
-    if (!location) {
-      Object.entries(allParameters).forEach(([key, value]) => {
-        if (key.toLowerCase().includes('lokalizacja') || key.toLowerCase().includes('adres')) {
-          location = value;
-        }
-      });
-    }
-
-    console.log('Znaleziona lokalizacja:', location);
-
-    // Opis
+    // Pobieranie opisu
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
-                       $('div[data-testid="ad-description"]').first().text().trim();
-    console.log('Opis (fragment):', description?.substring(0, 100));
+                       $('[data-testid="ad-description"]').first().text().trim();
 
     const result = {
-      title: title || '',
+      title: title || 'Brak tytułu',
       price,
       area,
       plotArea,
       rooms,
-      location,
+      location: location || 'Brak lokalizacji',
       description: description || '',
       sourceUrl: url,
       source: 'otodom',
-      parameters: allParameters // zachowujemy wszystkie parametry do debugowania
+      parameters: allParameters // Zachowujemy wszystkie parametry do debugowania
     };
 
-    console.log('Końcowe dane:', result);
+    console.log('Wynik scrapowania:', result);
     return result;
 
   } catch (error) {
-    console.error('Szczegóły błędu:', {
+    console.error('Błąd podczas scrapowania:', {
       message: error.message,
       stack: error.stack,
       response: error.response?.data
