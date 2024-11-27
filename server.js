@@ -539,15 +539,17 @@ app.put('/api/properties/:id', auth, async (req, res) => {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
-    // Zapisz historię cen jeśli cena się zmieniła
+    // Zapisz historię cen tylko jeśli nowa cena jest różna od aktualnej
     if (req.body.price && req.body.price !== property.price) {
       if (!property.priceHistory) property.priceHistory = [];
+      // Zapisujemy aktualną cenę do historii przed zmianą
       property.priceHistory.push({
         price: property.price,
         date: new Date()
       });
     }
 
+    // Aktualizujemy właściwość
     Object.assign(property, req.body, {
       updatedAt: new Date(),
       edited: true
