@@ -397,19 +397,13 @@ app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
 });
 
+// ===== AUTORYZACJA =====
 // Rejestracja
 app.post('/api/auth/register', async (req, res) => {
-  console.log('Otrzymano request rejestracji:', {
-    email: req.body.email,
-    hasPassword: !!req.body.password,
-    hasName: !!req.body.name
-  });
-
   try {
     const { email, password, name } = req.body;
 
     if (!email || !password) {
-      console.log('Brak wymaganych pól');
       return res.status(400).json({ 
         error: 'Email i hasło są wymagane',
         fields: { email: !email, password: !password }
@@ -495,7 +489,29 @@ app.post('/api/auth/login', async (req, res) => {
   }
 });
 
-// Scraping
+// ===== NIERUCHOMOŚCI =====
+// Pobieranie właściwości
+app.get('/api/properties', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id }
+      ]
+    });
+
+    const boardIds = boards.map(board => board._id);
+    const properties = await Property.find({ board: { $in: boardIds } })
+      .sort({ createdAt: -1 });
+
+    res.set('Cache-Control', 'no-cache');
+    res.json(properties);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Scraping nowej nieruchomości
 app.post('/api/scrape', auth, async (req, res) => {
   try {
     const { url } = req.body;
@@ -536,27 +552,6 @@ app.post('/api/scrape', auth, async (req, res) => {
   }
 });
 
-// Pobieranie właściwości
-app.get('/api/properties', auth, async (req, res) => {
-  try {
-    const boards = await Board.find({
-      $or: [
-        { owner: req.user._id },
-        { 'shared.user': req.user._id }
-      ]
-    });
-
-    const boardIds = boards.map(board => board._id);
-    const properties = await Property.find({ board: { $in: boardIds } })
-      .sort({ createdAt: -1 });
-
-    res.set('Cache-Control', 'no-cache');
-    res.json(properties);
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
-});
-
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
   try {
@@ -569,17 +564,14 @@ app.put('/api/properties/:id', auth, async (req, res) => {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
-    // Zapisz historię cen tylko jeśli nowa cena jest różna od aktualnej
     if (req.body.price && req.body.price !== property.price) {
       if (!property.priceHistory) property.priceHistory = [];
-      // Zapisujemy aktualną cenę do historii przed zmianą
       property.priceHistory.push({
         price: property.price,
         date: new Date()
       });
     }
 
-    // Aktualizujemy właściwość
     Object.assign(property, req.body, {
       updatedAt: new Date(),
       edited: true
@@ -615,75 +607,6 @@ app.delete('/api/properties/:id', auth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-// Aktualizacja cen
-app.post('/api/update-prices', auth, async (req, res) => {
-  try {
-    console.log('Rozpoczynam ręczną aktualizację cen...');
-    const properties = await Property.find({
-      sourceUrl: { $exists: true, $ne: '' }
-    });
-
-    const updates = [];
-    for (const property of properties) {
-      try {
-        console.log(`Sprawdzam aktualizację dla: ${property.title}`);
-        const scrapedData = await scrapeOtodom(property.sourceUrl);
-        
-        if (scrapedData.price && scrapedData.price !== property.price) {
-          console.log(`Znaleziono nową cenę dla ${property.title}: ${scrapedData.price} (było: ${property.price})`);
-          
-          // Zapisz starą cenę w historii
-          if (!property.priceHistory) property.priceHistory = [];
-          property.priceHistory.push({
-            price: property.price,
-            date: new Date()
-          });
-
-          // Aktualizuj dane
-          property.price = scrapedData.price;
-          property.lastChecked = new Date();
-          property.isActive = true;
-          
-          // Aktualizuj inne pola, jeśli się zmieniły
-          if (scrapedData.area) property.area = scrapedData.area;
-          if (scrapedData.plotArea) property.plotArea = scrapedData.plotArea;
-          if (scrapedData.rooms) property.rooms = scrapedData.rooms;
-          if (scrapedData.location) property.location = scrapedData.location;
-          
-          await property.save();
-          
-          updates.push({
-            id: property._id,
-            title: property.title,
-            oldPrice: property.price,
-            newPrice: scrapedData.price,
-            updatedAt: new Date()
-          });
-        } else {
-          // Nawet jeśli cena się nie zmieniła, aktualizujemy datę sprawdzenia
-          property.lastChecked = new Date();
-          await property.save();
-        }
-      } catch (error) {
-        console.error(`Błąd podczas aktualizacji ${property.title}:`, error);
-        // Jeśli nie udało się pobrać danych, oznacz ogłoszenie jako nieaktywne
-        property.isActive = false;
-        property.lastChecked = new Date();
-        await property.save();
-      }
-    }
-
-    console.log(`Zakończono aktualizację. Zaktualizowano ${updates.length} ogłoszeń`);
-    res.json({ 
-      success: true, 
-      updatedCount: updates.length,
-      updates 
-    });
-  } catch (error) {
-    console.error('Błąd podczas aktualizacji cen:', error);
-    res.status(500).json({ error: 'Błąd podczas aktualizacji cen' });
-  }
-});
 
 // Historia cen
 app.get('/api/properties/:id/price-history', auth, async (req, res) => {
@@ -698,14 +621,12 @@ app.get('/api/properties/:id/price-history', auth, async (req, res) => {
     }
 
     const priceHistory = [
-      // Dodaj pierwotną cenę
       {
         price: property.price,
         date: property.createdAt
       },
-      // Dodaj historię zmian
       ...(property.priceHistory || [])
-    ].sort((a, b) => new Date(b.date) - new Date(a.date)); // Sortuj od najnowszych
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
 
     res.json(priceHistory);
   } catch (error) {
@@ -714,57 +635,170 @@ app.get('/api/properties/:id/price-history', auth, async (req, res) => {
   }
 });
 
-// Zadanie cron do automatycznej aktualizacji cen
+// Odświeżanie pojedynczej nieruchomości
+app.post('/api/properties/:id/refresh', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property || !property.sourceUrl) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona lub brak źródłowego URL' });
+    }
+
+    const scrapedData = await scrapeOtodom(property.sourceUrl);
+    
+    if (!scrapedData.price) {
+      property.isActive = false;
+      property.lastChecked = new Date();
+      await property.save();
+      return res.json({ 
+        message: 'Oferta nieaktywna',
+        property 
+      });
+    }
+
+    if (scrapedData.price !== property.price) {
+      if (!property.priceHistory) property.priceHistory = [];
+      property.priceHistory.push({
+        price: property.price,
+        date: new Date()
+      });
+    }
+
+    property.price = scrapedData.price;
+    property.isActive = true;
+    property.lastChecked = new Date();
+    await property.save();
+
+    res.json({ 
+      message: 'Aktualizacja zakończona pomyślnie',
+      property
+    });
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Odświeżanie wszystkich nieruchomości
+app.post('/api/properties/refresh-all', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id }
+      ]
+    });
+
+    const boardIds = boards.map(board => board._id);
+    const properties = await Property.find({ 
+      board: { $in: boardIds },
+      sourceUrl: { $exists: true, $ne: '' }
+    });
+
+    const updates = [];
+    const errors = [];
+
+    for (const property of properties) {
+      try {
+        const scrapedData = await scrapeOtodom(property.sourceUrl);
+        
+        if (!scrapedData.price) {
+          property.isActive = false;
+          property.lastChecked = new Date();
+          await property.save();
+          updates.push({ id: property._id, status: 'inactive' });
+          continue;
+        }
+
+        if (scrapedData.price !== property.price) {
+          if (!property.priceHistory) property.priceHistory = [];
+          property.priceHistory.push({
+            price: property.price,
+            date: new Date()
+          });
+        }
+
+        property.price = scrapedData.price;
+        property.isActive = true;
+        property.lastChecked = new Date();
+        await property.save();
+
+        updates.push({ 
+          id: property._id, 
+          status: 'updated',
+          oldPrice: property.price,
+          newPrice: scrapedData.price
+        });
+
+      } catch (error) {
+        console.error(`Błąd podczas aktualizacji ${property._id}:`, error);
+        errors.push({ id: property._id, error: error.message });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      updated: updates.length,
+      updates,
+      errors
+    });
+
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji wszystkich nieruchomości:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// Automatyczna aktualizacja co 24h
 if (cron) {
-  // Uruchamiaj o 00:05 każdego dnia
-  cron.schedule('5 0 * * *', async () => {
-    console.log('Rozpoczynam zaplanowaną aktualizację cen...');
+  cron.schedule('0 3 * * *', async () => {
+    console.log('Rozpoczynam zaplanowaną aktualizację nieruchomości...');
     try {
       const properties = await Property.find({
         sourceUrl: { $exists: true, $ne: '' }
       });
 
-      console.log(`Znaleziono ${properties.length} ogłoszeń do sprawdzenia`);
-
       for (const property of properties) {
         try {
-          console.log(`Sprawdzam: ${property.title}`);
           const scrapedData = await scrapeOtodom(property.sourceUrl);
           
-          if (scrapedData.price && scrapedData.price !== property.price) {
-            console.log(`Aktualizacja ceny dla ${property.title}: ${property.price} -> ${scrapedData.price}`);
-            
+          if (!scrapedData.price) {
+            property.isActive = false;
+            property.lastChecked = new Date();
+            await property.save();
+            continue;
+          }
+
+          if (scrapedData.price !== property.price) {
             if (!property.priceHistory) property.priceHistory = [];
             property.priceHistory.push({
               price: property.price,
               date: new Date()
             });
-
-            property.price = scrapedData.price;
-            property.isActive = true;
-            // Aktualizuj inne pola
-            if (scrapedData.area) property.area = scrapedData.area;
-            if (scrapedData.plotArea) property.plotArea = scrapedData.plotArea;
-            if (scrapedData.rooms) property.rooms = scrapedData.rooms;
-            if (scrapedData.location) property.location = scrapedData.location;
           }
-          
+
+          property.price = scrapedData.price;
+          property.isActive = true;
           property.lastChecked = new Date();
           await property.save();
+
         } catch (error) {
-          console.error(`Błąd podczas aktualizacji ${property.title}:`, error);
+          console.error(`Błąd podczas aktualizacji ${property._id}:`, error);
           property.isActive = false;
           property.lastChecked = new Date();
           await property.save();
         }
       }
 
-      console.log('Zakończono zaplanowaną aktualizację cen');
+      console.log('Zakończono zaplanowaną aktualizację nieruchomości');
     } catch (error) {
       console.error('Błąd podczas zaplanowanej aktualizacji:', error);
     }
   });
 }
+
 
 // Keepalive dla darmowego planu Render
 setInterval(() => {
