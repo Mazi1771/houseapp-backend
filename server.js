@@ -237,22 +237,23 @@ async function scrapeOtodom(url) {
     const html = response.data;
     const $ = cheerio.load(html);
 
-    // Debug: zapisz pierwsze 1000 znaków HTML
-    console.log('Otrzymany HTML:', html.substring(0, 1000));
+    // Sprawdź czy oferta jest archiwalna
+    const isArchived = $('title').text().toLowerCase().includes('archiwalne');
+    if (isArchived) {
+      throw new Error('Oferta jest archiwalna lub została usunięta');
+    }
 
-    // Szukanie parametrów w różnych formatach
-    const parameterContainers = [
-      '.css-1ccovha',    // Stary format
-      '[data-testid="ad-details-table"] > div', // Nowy format
-      '.css-kos6vh',     // Dodatkowy format
-      '.css-1k6nwej'     // Jeszcze jeden format
+    // Debug: Zbieranie wszystkich parametrów
+    let allParameters = {};
+    const parameterSelectors = [
+      '.css-1ccovha',
+      '[data-testid="ad-details-table"] > div',
+      '.css-kos6vh',
+      '.css-1k6nwej'
     ];
 
-    let allParameters = {};
-    
-    parameterContainers.forEach(selector => {
+    parameterSelectors.forEach(selector => {
       $(selector).each((_, element) => {
-        // Próbujemy różne struktury
         let label, value;
 
         // Struktura 1: div > div (label) + div (value)
@@ -279,32 +280,34 @@ async function scrapeOtodom(url) {
       });
     });
 
-    // Szukanie podstawowych informacji
+    // Tytuł
     const title = $('h1').first().text().trim() ||
                  $('[data-testid="ad-title"]').first().text().trim() ||
                  $('[data-cy="adPageHeader"]').first().text().trim();
+    console.log('Znaleziony tytuł:', title);
 
-    // Szukanie ceny
+    // Cena - szukamy w różnych miejscach
     let priceText = '';
     const priceSelectors = [
       '[data-testid="price"]',
       '[data-cy="adPageHeaderPrice"]',
       '.css-8qi9av',
-      '.css-t3wmkv',
-      '.css-1vr19r7'
+      '.css-12hd9gg',
+      'div[data-cy="price.value"]'
     ];
 
     for (const selector of priceSelectors) {
-      const element = $(selector).first();
+      const element = $(selector);
       if (element.length) {
         priceText = element.text().trim();
+        console.log(`Znaleziono cenę używając selektora ${selector}:`, priceText);
         break;
       }
     }
-
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+    console.log('Przetworzona cena:', price);
 
-    // Szukanie powierzchni i pokoi w parametrach
+    // Powierzchnia i pokoje
     let area = null;
     let rooms = null;
     let plotArea = null;
@@ -334,7 +337,9 @@ async function scrapeOtodom(url) {
       }
     });
 
-    // Szukanie lokalizacji
+    console.log('Znalezione parametry:', { area, plotArea, rooms });
+
+    // Lokalizacja
     const locationSelectors = [
       '[data-testid="location-name"]',
       '[data-testid="ad-header-location"]',
@@ -344,7 +349,7 @@ async function scrapeOtodom(url) {
 
     let location = '';
     for (const selector of locationSelectors) {
-      const element = $(selector).first();
+      const element = $(selector);
       if (element.length) {
         location = element.text().trim();
         break;
@@ -363,10 +368,12 @@ async function scrapeOtodom(url) {
       }
     }
 
-    // Pobieranie opisu
+    console.log('Znaleziona lokalizacja:', location);
+
+    // Opis
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('[data-testid="ad-description"]').first().text().trim();
-
+    
     const result = {
       title: title || 'Brak tytułu',
       price,
@@ -377,18 +384,26 @@ async function scrapeOtodom(url) {
       description: description || '',
       sourceUrl: url,
       source: 'otodom',
-      parameters: allParameters // Zachowujemy wszystkie parametry do debugowania
+      isActive: true,
+      status: 'wybierz',
+      lastChecked: new Date(),
+      parameters: allParameters // zachowujemy wszystkie parametry do debugowania
     };
 
-    console.log('Wynik scrapowania:', result);
+    console.log('Końcowy rezultat:', result);
     return result;
 
   } catch (error) {
-    console.error('Błąd podczas scrapowania:', {
+    console.error('Szczegóły błędu scrapera:', {
       message: error.message,
       stack: error.stack,
-      response: error.response?.data
+      response: error.response?.data,
+      status: error.response?.status
     });
+
+    if (error.response?.status === 410 || error.message.includes('archiwalna')) {
+      throw new Error('Oferta jest nieaktywna lub została usunięta');
+    }
     throw error;
   }
 }
@@ -517,32 +532,41 @@ app.post('/api/scrape', auth, async (req, res) => {
     const { url } = req.body;
     console.log('Otrzymany URL:', url);
     
-    if (!url || !url.includes('otodom.pl')) {
+    if (!url) {
+      return res.status(400).json({ error: 'URL jest wymagany' });
+    }
+
+    if (!url.includes('otodom.pl')) {
       return res.status(400).json({ error: 'Nieprawidłowy URL. Musi być z serwisu Otodom.' });
     }
 
-    const defaultBoard = await Board.findOne({ owner: req.user._id });
-    if (!defaultBoard) {
-      return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
+    try {
+      const scrapedData = await scrapeOtodom(url);
+      const defaultBoard = await Board.findOne({ owner: req.user._id });
+      
+      if (!defaultBoard) {
+        return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
+      }
+
+      const property = new Property({
+        ...scrapedData,
+        board: defaultBoard._id,
+      });
+
+      await property.save();
+      defaultBoard.properties.push(property._id);
+      await defaultBoard.save();
+
+      res.json(property);
+    } catch (scrapingError) {
+      if (scrapingError.message.includes('nieaktywna') || scrapingError.message.includes('archiwalna')) {
+        return res.status(400).json({ 
+          error: 'Ta oferta jest już nieaktywna lub została usunięta. Spróbuj dodać inną ofertę.',
+          details: scrapingError.message
+        });
+      }
+      throw scrapingError;
     }
-
-    console.log('Rozpoczynam scrapowanie...');
-    const scrapedData = await scrapeOtodom(url);
-    console.log('Pobrane dane:', scrapedData);
-
-    const property = new Property({
-      ...scrapedData,
-      board: defaultBoard._id,
-      status: 'wybierz',
-      edited: false,
-      lastChecked: new Date()
-    });
-
-    await property.save();
-    defaultBoard.properties.push(property._id);
-    await defaultBoard.save();
-
-    res.json(property);
   } catch (error) {
     console.error('Błąd podczas scrapowania:', error);
     res.status(500).json({
