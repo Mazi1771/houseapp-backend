@@ -214,6 +214,8 @@ const auth = async (req, res, next) => {
   }
 };
 // Funkcja scrapowania
+const { geocodeAddress } = require('./services/geocoding');
+
 async function scrapeOtodom(url) {
   try {
     console.log('Rozpoczynam scrapowanie:', url);
@@ -243,7 +245,7 @@ async function scrapeOtodom(url) {
       throw new Error('Oferta jest archiwalna lub została usunięta');
     }
 
-    // Debug: Zbieranie wszystkich parametrów
+    // Zbieranie parametrów
     let allParameters = {};
     const parameterSelectors = [
       '.css-1ccovha',
@@ -255,15 +257,12 @@ async function scrapeOtodom(url) {
     parameterSelectors.forEach(selector => {
       $(selector).each((_, element) => {
         let label, value;
-
-        // Struktura 1: div > div (label) + div (value)
         const divs = $(element).find('div');
         if (divs.length >= 2) {
           label = $(divs[0]).text().trim();
           value = $(divs[1]).text().trim();
         }
 
-        // Struktura 2: data-testid="table-value" i "table-label"
         if (!label || !value) {
           const labelEl = $(element).find('[data-testid="table-label"]');
           const valueEl = $(element).find('[data-testid="table-value"]');
@@ -286,7 +285,7 @@ async function scrapeOtodom(url) {
                  $('[data-cy="adPageHeader"]').first().text().trim();
     console.log('Znaleziony tytuł:', title);
 
-    // Cena - szukamy w różnych miejscach
+    // Cena
     let priceText = '';
     const priceSelectors = [
       '[data-testid="price"]',
@@ -304,8 +303,8 @@ async function scrapeOtodom(url) {
         break;
       }
     }
+    
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
-    console.log('Przetworzona cena:', price);
 
     // Powierzchnia i pokoje
     let area = null;
@@ -314,22 +313,19 @@ async function scrapeOtodom(url) {
 
     Object.entries(allParameters).forEach(([key, value]) => {
       const keyLower = key.toLowerCase();
-      // Powierzchnia
-      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki') && !keyLower.includes('dzialki')) {
+      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki')) {
         const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           area = parseFloat(match[1].replace(',', '.'));
         }
       }
-      // Powierzchnia działki
-      else if (keyLower.includes('działki') || keyLower.includes('dzialki') || keyLower.includes('działka') || keyLower.includes('dzialka')) {
+      else if (keyLower.includes('działki') || keyLower.includes('działka')) {
         const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           plotArea = parseFloat(match[1].replace(',', '.'));
         }
       }
-      // Pokoje
-      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje') || keyLower.includes('liczba pokoi')) {
+      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje')) {
         const match = value.match(/(\d+)/);
         if (match) {
           rooms = parseInt(match[1]);
@@ -337,68 +333,36 @@ async function scrapeOtodom(url) {
       }
     });
 
-    console.log('Znalezione parametry:', { area, plotArea, rooms });
-
     // Lokalizacja
-    const locationSelectors = [
-      '[data-testid="location-name"]',
-      '[data-testid="ad-header-location"]',
-      '.css-17o5lod',
-      '[aria-label="Adres"]'
-    ];
-
-    let location = '';
-    for (const selector of locationSelectors) {
-      const element = $(selector);
-      if (element.length) {
-        location = element.text().trim();
-        break;
-      }
-    }
-
-    // Jeśli nie znaleziono lokalizacji w podstawowych selektorach, szukaj w breadcrumbach
-    if (!location) {
-      const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
-        .map((_, el) => $(el).text().trim())
-        .get()
-        .filter(text => !text.includes('Ogłoszenia') && !text.includes('Nieruchomości'));
-      
-      if (breadcrumbs.length > 0) {
-        location = breadcrumbs.join(', ');
-      }
-    }
-
-    console.log('Znaleziona lokalizacja:', location);
+    const location = getLocation($) || 'Brak lokalizacji';
 
     // Opis
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('[data-testid="ad-description"]').first().text().trim();
-    
+
     const result = {
       title: title || 'Brak tytułu',
       price,
       area,
       plotArea,
       rooms,
-      location: location || 'Brak lokalizacji',
+      location,
       description: description || '',
       sourceUrl: url,
       source: 'otodom',
       isActive: true,
       status: 'wybierz',
       lastChecked: new Date(),
-      parameters: allParameters // zachowujemy wszystkie parametry do debugowania
+      parameters: allParameters
     };
 
-    console.log('Końcowy rezultat:', result);
     return result;
 
   } catch (error) {
     console.error('Szczegóły błędu scrapera:', {
       message: error.message,
       stack: error.stack,
-      response: error.response?.data,
-      status: error.response?.status
+      response: error.response?.data
     });
 
     if (error.response?.status === 410 || error.message.includes('archiwalna')) {
@@ -406,6 +370,40 @@ async function scrapeOtodom(url) {
     }
     throw error;
   }
+}
+
+// Pomocnicza funkcja do lokalizacji
+function getLocation($) {
+  const locationSelectors = [
+    '[data-testid="location-name"]',
+    '[data-testid="ad-header-location"]',
+    '.css-17o5lod',
+    '[aria-label="Adres"]',
+    '[data-cy="location-address"]'
+  ];
+
+  for (const selector of locationSelectors) {
+    const locationText = $(selector).first().text().trim();
+    if (locationText) {
+      console.log(`Znaleziono lokalizację w ${selector}:`, locationText);
+      return locationText;
+    }
+  }
+
+  const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(text => 
+      !text.includes('Ogłoszenia') && 
+      !text.includes('Nieruchomości') &&
+      !text.includes('Strona główna')
+    );
+  
+  if (breadcrumbs.length > 0) {
+    return breadcrumbs.join(', ');
+  }
+
+  return null;
 }
 // Endpoint testowy
 app.get('/', (req, res) => {
@@ -541,7 +539,21 @@ app.post('/api/scrape', auth, async (req, res) => {
     }
 
     try {
+      // Scraping
       const scrapedData = await scrapeOtodom(url);
+      
+      // Geocoding
+      if (scrapedData.location && scrapedData.location !== 'Brak lokalizacji') {
+        const geoData = await geocodeAddress(scrapedData.location);
+        if (geoData) {
+          scrapedData.coordinates = geoData.coordinates;
+          scrapedData.fullAddress = geoData.fullAddress;
+          scrapedData.city = geoData.city;
+          scrapedData.district = geoData.district;
+          scrapedData.region = geoData.region;
+        }
+      }
+
       const defaultBoard = await Board.findOne({ owner: req.user._id });
       
       if (!defaultBoard) {
@@ -575,7 +587,6 @@ app.post('/api/scrape', auth, async (req, res) => {
     });
   }
 });
-
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
   try {
