@@ -74,27 +74,12 @@ const normalizeAddress = (address) => {
     .replace(/,\s*$/, '');
 };
 
-const extractLocationFromBreadcrumbs = ($) => {
-  console.log('Rozpoczynam ekstrakcję z breadcrumbs...');
-  
-  const breadcrumbs = $('[data-cy="breadcrumbs-container"] a, [data-cy="breadcrumbs-link"]')
-    .map((_, el) => {
-      const text = $(el).text().trim();
-      console.log('Znaleziony breadcrumb:', text);
-      return text;
-    })
-    .get()
-    .filter(text => {
-      const isValid = !text.includes('Ogłoszenia') && 
-                     !text.includes('Nieruchomości') &&
-                     !text.includes('Strona główna') &&
-                     text.length > 2;
-      console.log(`Breadcrumb "${text}": ${isValid ? 'zachowany' : 'odrzucony'}`);
-      return isValid;
-    });
-
-  console.log('Wszystkie znalezione breadcrumbs:', breadcrumbs);
-  return breadcrumbs.length > 0 ? breadcrumbs.join(', ') : null;
+const normalizeAddress = (address) => {
+  if (!address) return null;
+  return address
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/,\s*$/, '');
 };
 
 const extractLocationFromScript = ($) => {
@@ -280,8 +265,6 @@ const auth = async (req, res, next) => {
 };
 
 // Funkcja scrapowania
-const { geocodeAddress } = require('./services/geocoding');
-
 async function scrapeOtodom(url) {
   try {
     console.log('Rozpoczynam scrapowanie:', url);
@@ -310,7 +293,6 @@ async function scrapeOtodom(url) {
       }
     });
 
-    // Sprawdzenie statusu odpowiedzi
     if (response.status !== 200) {
       console.error('Błąd odpowiedzi ScraperAPI:', {
         status: response.status,
@@ -326,42 +308,13 @@ async function scrapeOtodom(url) {
 
     console.log('Rozpoczynam parsowanie HTML');
     const $ = cheerio.load(html);
-console.log('=== DEBUGOWANIE HTML ===');
-console.log('Wszystkie data-cy atrybuty:');
-$('[data-cy]').each((i, el) => {
-    console.log(`data-cy="${$(el).attr('data-cy')}"`);
-});
 
-console.log('\nWszystkie data-testid atrybuty:');
-$('[data-testid]').each((i, el) => {
-    console.log(`data-testid="${$(el).attr('data-testid')}"`);
-});
-
-// Szukamy sekcji z lokalizacją
-console.log('\nSekcje z potencjalną lokalizacją:');
-$('div').each((i, el) => {
-    const text = $(el).text();
-    if (text.includes('Lokalizacja') || text.includes('adres')) {
-        console.log('Znaleziono sekcję:', {
-            text: text.substring(0, 100),
-            class: $(el).attr('class'),
-            id: $(el).attr('id')
-        });
-    }
-});
-
-// Szukamy sekcji z parametrami
-console.log('\nSekcje z parametrami:');
-$('div').each((i, el) => {
-    const text = $(el).text();
-    if (text.includes('Powierzchnia') || text.includes('Liczba pokoi')) {
-        console.log('Znaleziono sekcję:', {
-            text: text.substring(0, 100),
-            class: $(el).attr('class'),
-            id: $(el).attr('id')
-        });
-    }
-});
+    // Inicjalizacja zmiennych
+    let area = null;
+    let rooms = null;
+    let plotArea = null;
+    let status = 'wybierz';
+    let location = '';
 
     // Sprawdzenie czy oferta jest archiwalna
     const isArchived = $('title').text().toLowerCase().includes('archiwalne');
@@ -369,54 +322,17 @@ $('div').each((i, el) => {
       throw new Error('Oferta jest archiwalna lub została usunięta');
     }
 
-    // Zbieranie parametrów
-    let allParameters = {};
-    const parameterSelectors = [
-      '.css-1ccovha',
-      '[data-testid="ad-details-table"] > div',
-      '.css-kos6vh',
-      '.css-1k6nwej'
-    ];
-
-    parameterSelectors.forEach(selector => {
-      $(selector).each((_, element) => {
-        let label, value;
-
-        // Struktura 1: div > div
-        const divs = $(element).find('div');
-        if (divs.length >= 2) {
-          label = $(divs[0]).text().trim();
-          value = $(divs[1]).text().trim();
-        }
-
-        // Struktura 2: data-testid
-        if (!label || !value) {
-          const labelEl = $(element).find('[data-testid="table-label"]');
-          const valueEl = $(element).find('[data-testid="table-value"]');
-          if (labelEl.length && valueEl.length) {
-            label = labelEl.text().trim();
-            value = valueEl.text().trim();
-          }
-        }
-
-        if (label && value) {
-          allParameters[label] = value;
-          console.log(`Znaleziono parametr: ${label} = ${value}`);
-        }
-      });
-    });
-
     // Pobieranie tytułu
     const title = $('h1').first().text().trim() ||
                  $('[data-testid="ad-title"]').first().text().trim() ||
-                 $('[data-cy="adPageHeader"]').first().text().trim();
+                 $('[data-cy="adPageAdTitle"]').first().text().trim();
     console.log('Znaleziony tytuł:', title);
 
     // Pobieranie ceny
     let priceText = '';
     const priceSelectors = [
-      '[data-testid="price"]',
       '[data-cy="adPageHeaderPrice"]',
+      '[data-testid="price"]',
       '.css-8qi9av',
       '.css-12hd9gg',
       'div[data-cy="price.value"]'
@@ -434,48 +350,90 @@ $('div').each((i, el) => {
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
     console.log('Przetworzona cena:', price);
 
-    // Parsowanie powierzchni i pokoi
-    let area = null;
-    let rooms = null;
-    let plotArea = null;
-
-    Object.entries(allParameters).forEach(([key, value]) => {
-      const keyLower = key.toLowerCase();
+    // Pobieranie parametrów z głównej sekcji
+    const mainSection = $('.css-1xbf5wd');
+    if (mainSection.length) {
+      const mainText = mainSection.text();
+      
       // Powierzchnia
-      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki') && !keyLower.includes('dzialki')) {
-        const match = value.match(/(\d+[.,]?\d*)/);
-        if (match) {
-          area = parseFloat(match[1].replace(',', '.'));
-          console.log('Znaleziona powierzchnia:', area);
-        }
+      const areaMatch = mainText.match(/(\d+)m²/);
+      if (areaMatch) {
+        area = parseInt(areaMatch[1]);
+        console.log('Znaleziona powierzchnia:', area);
       }
-      // Powierzchnia działki
-      else if (keyLower.includes('działki') || keyLower.includes('dzialki') || 
-               keyLower.includes('działka') || keyLower.includes('dzialka')) {
-        const match = value.match(/(\d+[.,]?\d*)/);
-        if (match) {
-          plotArea = parseFloat(match[1].replace(',', '.'));
-          console.log('Znaleziona powierzchnia działki:', plotArea);
-        }
+      
+      // Liczba pokoi
+      const roomsMatch = mainText.match(/(\d+)\s*poko[ij]/i);
+      if (roomsMatch) {
+        rooms = parseInt(roomsMatch[1]);
+        console.log('Znaleziona liczba pokoi:', rooms);
       }
-      // Pokoje
-      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje') || keyLower.includes('liczba pokoi')) {
-        const match = value.match(/(\d+)/);
-        if (match) {
-          rooms = parseInt(match[1]);
-          console.log('Znaleziona liczba pokoi:', rooms);
-        }
+
+      // Stan
+      const stateMatch = mainText.match(/Stan wykończenia:([\wś\s]+)(?=Rynek|$)/);
+      if (stateMatch) {
+        status = stateMatch[1].trim().toLowerCase();
+        // Mapowanie stanów
+        if (status.includes('wykończenia')) status = 'do wykończenia';
+        if (status.includes('deweloperski')) status = 'stan deweloperski';
+        if (status.includes('remontu')) status = 'do remontu';
+        if (status.includes('zamieszkania')) status = 'do zamieszkania';
+        console.log('Znaleziony stan:', status);
       }
-    });
+    }
+
+    // Pobieranie powierzchni działki
+    const plotSection = $('.css-t7cajz');
+    if (plotSection.length) {
+      const plotText = plotSection.text();
+      const plotMatch = plotText.match(/Powierzchnia działki:(\d+)\s*m²/);
+      if (plotMatch) {
+        plotArea = parseInt(plotMatch[1]);
+        console.log('Znaleziona powierzchnia działki:', plotArea);
+      }
+    }
 
     // Pobieranie lokalizacji
-    console.log('Rozpoczynam wyszukiwanie lokalizacji...');
-const location = getLocation($);
-console.log('Znaleziona lokalizacja:', location);
+    const breadcrumbs = $('[data-cy="breadcrumb"]')
+      .map((_, el) => $(el).text().trim())
+      .get()
+      .filter(text => 
+        !text.includes('Nieruchomości') &&
+        !text.includes('Domy') &&
+        text.length > 2
+      );
 
-       // Pobieranie opisu
+    if (breadcrumbs.length > 0) {
+      location = breadcrumbs.join(', ');
+      console.log('Lokalizacja z breadcrumbs:', location);
+    }
+
+    // Jeśli nie znaleziono lokalizacji w breadcrumbs, szukaj w tytule
+    if (!location) {
+      const titleText = $('[data-cy="adPageAdTitle"]').text();
+      if (titleText.includes('ul.') || titleText.includes('ulica')) {
+        const streetMatch = titleText.match(/ul\.\s*([\w\s]+)/i);
+        if (streetMatch) {
+          location = streetMatch[1].trim();
+          console.log('Lokalizacja z tytułu:', location);
+        }
+      }
+    }
+
+    // Pobieranie opisu
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('[data-testid="ad-description"]').first().text().trim();
+
+    // Zbieranie wszystkich parametrów
+    let allParameters = {};
+    $('.css-1xbf5wd div').each((_, element) => {
+      const text = $(element).text().trim();
+      const parts = text.split(':');
+      if (parts.length === 2) {
+        const [key, value] = parts;
+        allParameters[key.trim()] = value.trim();
+      }
+    });
 
     // Tworzenie końcowego obiektu
     const result = {
@@ -489,9 +447,9 @@ console.log('Znaleziona lokalizacja:', location);
       sourceUrl: url,
       source: 'otodom',
       isActive: true,
-      status: 'wybierz',
+      status,
       lastChecked: new Date(),
-      details: allParameters // zachowujemy wszystkie znalezione parametry
+      details: allParameters
     };
 
     console.log('Wynik scrapowania:', result);
@@ -505,7 +463,6 @@ console.log('Znaleziona lokalizacja:', location);
       status: error.response?.status
     });
 
-    // Rozszerzona obsługa błędów
     if (error.code === 'ECONNABORTED') {
       throw new Error('Przekroczono limit czasu żądania');
     }
