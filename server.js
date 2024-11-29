@@ -6,7 +6,7 @@ const jwt = require('jsonwebtoken');
 const axios = require('axios');
 const cheerio = require('cheerio');
 const cron = require('node-cron');
-
+const { geocodeAddress } = require('./services/geocoding');
 const app = express();
 
 
