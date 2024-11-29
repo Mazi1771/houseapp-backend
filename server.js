@@ -59,7 +59,56 @@ mongoose.connection.on('error', (err) => {
 mongoose.connection.on('disconnected', () => {
   console.log('MongoDB rozłączone');
 });
+//Funcja pod Scrapera
+const normalizeAddress = (address) => {
+  if (!address) return null;
+  return address
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/,\s*$/, '');
+};
 
+const extractLocationFromBreadcrumbs = ($) => {
+  const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(text => 
+      !text.includes('Ogłoszenia') && 
+      !text.includes('Nieruchomości') &&
+      !text.includes('Strona główna')
+    );
+  
+  return breadcrumbs.length > 0 ? breadcrumbs.join(', ') : null;
+};
+
+const extractLocationFromScript = ($) => {
+  try {
+    const scripts = $('script[type="application/ld+json"]');
+    let locationData = null;
+
+    scripts.each((_, script) => {
+      try {
+        const data = JSON.parse($(script).html());
+        if (data && data.address) {
+          locationData = data.address;
+        }
+      } catch (e) {
+        console.log('Błąd parsowania JSON-LD:', e);
+      }
+    });
+
+    if (locationData) {
+      const parts = [];
+      if (locationData.streetAddress) parts.push(locationData.streetAddress);
+      if (locationData.addressLocality) parts.push(locationData.addressLocality);
+      if (locationData.addressRegion) parts.push(locationData.addressRegion);
+      return parts.join(', ');
+    }
+  } catch (e) {
+    console.log('Błąd wydobywania lokalizacji ze skryptu:', e);
+  }
+  return null;
+};
 // Funkcja połączenia z MongoDB
 const connectDB = async () => {
   try {
@@ -213,6 +262,7 @@ const auth = async (req, res, next) => {
     });
   }
 };
+
 // Funkcja scrapowania
 const { geocodeAddress } = require('./services/geocoding');
 
@@ -367,37 +417,11 @@ async function scrapeOtodom(url) {
     });
 
     // Pobieranie lokalizacji
-    const locationSelectors = [
-      '[data-testid="location-name"]',
-      '[data-testid="ad-header-location"]',
-      '.css-17o5lod',
-      '[aria-label="Adres"]'
-    ];
+    console.log('Rozpoczynam wyszukiwanie lokalizacji...');
+const location = getLocation($);
+console.log('Znaleziona lokalizacja:', location);
 
-    let location = '';
-    for (const selector of locationSelectors) {
-      const element = $(selector);
-      if (element.length) {
-        location = element.text().trim();
-        console.log('Znaleziona lokalizacja:', location);
-        break;
-      }
-    }
-
-    // Jeśli nie znaleziono lokalizacji w podstawowych selektorach, szukaj w breadcrumbach
-    if (!location) {
-      const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
-        .map((_, el) => $(el).text().trim())
-        .get()
-        .filter(text => !text.includes('Ogłoszenia') && !text.includes('Nieruchomości'));
-      
-      if (breadcrumbs.length > 0) {
-        location = breadcrumbs.join(', ');
-        console.log('Lokalizacja z breadcrumbs:', location);
-      }
-    }
-
-    // Pobieranie opisu
+       // Pobieranie opisu
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('[data-testid="ad-description"]').first().text().trim();
 
@@ -453,34 +477,55 @@ async function scrapeOtodom(url) {
 
 // Pomocnicza funkcja do lokalizacji
 function getLocation($) {
+  console.log('Rozpoczynam wydobywanie lokalizacji...');
+  
   const locationSelectors = [
+    // Szczegółowy adres
     '[data-testid="location-name"]',
-    '[data-testid="ad-header-location"]',
-    '.css-17o5lod',
+    '[data-cy="location-address"]',
     '[aria-label="Adres"]',
-    '[data-cy="location-address"]'
+    '.css-17o5lod',
+    
+    // Nagłówek z lokalizacją
+    '[data-testid="ad-header-location"]',
+    '.css-1k6nwej > div:first-child',
+    
+    // Dodatkowe selektory
+    '[data-cy="location-text"]',
+    '.e1k5sj2s0'
   ];
 
+  // 1. Próba standardowych selektorów
   for (const selector of locationSelectors) {
-    const locationText = $(selector).first().text().trim();
-    if (locationText) {
-      console.log(`Znaleziono lokalizację w ${selector}:`, locationText);
-      return locationText;
+    const element = $(selector).first();
+    const locationText = element.text().trim();
+    
+    if (locationText && locationText.length > 3) {
+      console.log(`Znaleziono lokalizację w selektorze ${selector}:`, locationText);
+      const normalizedLocation = normalizeAddress(locationText);
+      if (normalizedLocation) {
+        return normalizedLocation;
+      }
     }
   }
 
-  const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
-    .map((_, el) => $(el).text().trim())
-    .get()
-    .filter(text => 
-      !text.includes('Ogłoszenia') && 
-      !text.includes('Nieruchomości') &&
-      !text.includes('Strona główna')
-    );
-  
-  if (breadcrumbs.length > 0) {
-    return breadcrumbs.join(', ');
+  // 2. Próba danych z JSON-LD
+  const scriptLocation = extractLocationFromScript($);
+  if (scriptLocation) {
+    console.log('Znaleziono lokalizację w JSON-LD:', scriptLocation);
+    return normalizeAddress(scriptLocation);
   }
+
+  // 3. Próba breadcrumbs jako ostateczność
+  const breadcrumbsLocation = extractLocationFromBreadcrumbs($);
+  if (breadcrumbsLocation) {
+    console.log('Znaleziono lokalizację w breadcrumbs:', breadcrumbsLocation);
+    return normalizeAddress(breadcrumbsLocation);
+  }
+
+  console.log('Nie udało się znaleźć lokalizacji');
+  return 'Brak lokalizacji';
+}
 
   return null;
 }
