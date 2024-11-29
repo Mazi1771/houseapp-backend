@@ -527,8 +527,6 @@ function getLocation($) {
   return 'Brak lokalizacji';
 }
 
-  return null;
-}
 // Endpoint testowy
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
