@@ -269,9 +269,7 @@ const auth = async (req, res, next) => {
 
 // Funkcja scrapowania
 
-      console.log('Wynik scrapowania:', result);
-      return result;
-
+      
     } catch (axiosError) {
       console.error('Błąd podczas wykonywania requestu:', axiosError.message);
       
@@ -303,6 +301,7 @@ const auth = async (req, res, next) => {
     throw new Error(`Błąd podczas scrapowania: ${error.message}`);
   }
 }
+
 // Endpoint testowy
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
