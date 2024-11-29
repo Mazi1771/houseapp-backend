@@ -326,15 +326,41 @@ async function scrapeOtodom(url) {
 
     console.log('Rozpoczynam parsowanie HTML');
     const $ = cheerio.load(html);
-    console.log('Pobrany HTML:', html); 
-    $('*').each((i, el) => {
-  const element = $(el);
-  if (element.attr('class')) {
-    console.log('Znaleziona klasa:', element.attr('class'));
-  }
-  if (element.attr('data-cy')) {
-    console.log('Znaleziony atrybut data-cy:', element.attr('data-cy'));
-  }
+console.log('=== DEBUGOWANIE HTML ===');
+console.log('Wszystkie data-cy atrybuty:');
+$('[data-cy]').each((i, el) => {
+    console.log(`data-cy="${$(el).attr('data-cy')}"`);
+});
+
+console.log('\nWszystkie data-testid atrybuty:');
+$('[data-testid]').each((i, el) => {
+    console.log(`data-testid="${$(el).attr('data-testid')}"`);
+});
+
+// Szukamy sekcji z lokalizacją
+console.log('\nSekcje z potencjalną lokalizacją:');
+$('div').each((i, el) => {
+    const text = $(el).text();
+    if (text.includes('Lokalizacja') || text.includes('adres')) {
+        console.log('Znaleziono sekcję:', {
+            text: text.substring(0, 100),
+            class: $(el).attr('class'),
+            id: $(el).attr('id')
+        });
+    }
+});
+
+// Szukamy sekcji z parametrami
+console.log('\nSekcje z parametrami:');
+$('div').each((i, el) => {
+    const text = $(el).text();
+    if (text.includes('Powierzchnia') || text.includes('Liczba pokoi')) {
+        console.log('Znaleziono sekcję:', {
+            text: text.substring(0, 100),
+            class: $(el).attr('class'),
+            id: $(el).attr('id')
+        });
+    }
 });
 
     // Sprawdzenie czy oferta jest archiwalna
