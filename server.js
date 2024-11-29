@@ -74,14 +74,6 @@ const normalizeAddress = (address) => {
     .replace(/,\s*$/, '');
 };
 
-const normalizeAddress = (address) => {
-  if (!address) return null;
-  return address
-    .replace(/\s+/g, ' ')
-    .trim()
-    .replace(/,\s*$/, '');
-};
-
 const extractLocationFromScript = ($) => {
   try {
     const scripts = $('script[type="application/ld+json"]');
@@ -109,6 +101,17 @@ const extractLocationFromScript = ($) => {
     console.log('Błąd wydobywania lokalizacji ze skryptu:', e);
   }
   return null;
+};
+const extractLocationFromBreadcrumbs = ($) => {
+  const breadcrumbs = $('[data-cy="breadcrumb-link"]')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(text => 
+      !text.includes('Ogłoszenia') && 
+      !text.includes('Nieruchomości')
+    );
+  
+  return breadcrumbs.length > 0 ? breadcrumbs.join(', ') : null;
 };
 // Funkcja połączenia z MongoDB
 const connectDB = async () => {
@@ -482,78 +485,6 @@ async function scrapeOtodom(url) {
     throw new Error(`Błąd podczas scrapowania: ${error.message}`);
   }
 }
-
-
-// Pomocnicza funkcja do lokalizacji
-const getLocation = ($) => {
-  console.log('Rozpoczynam wydobywanie lokalizacji...');
-  
-  // Najpierw spróbujmy pobrać lokalizację z tytułu (często zawiera miasto)
-  const title = $('h1').first().text().trim();
-  console.log('Tytuł ogłoszenia:', title);
-  
- const locationSelectors = [
-    // Nowe selektory
-    '.css-1h1zqwk',  // Nowy potencjalny selektor
-    '[data-cy="adPageLocation"]',
-    '[data-cy="locationLabel"]',
-    '.css-1huvh3q',  // Nowy potencjalny selektor
-    '.css-1k6nwej',  // Bez first-child
-    
-    // Stare selektory
-    '[data-testid="location-name"]',
-    '[data-cy="location-address"]',
-    '[aria-label="Adres"]',
-    '.css-17o5lod',
-    '[data-cy="adPageHeaderLocation"]',
-    '[data-testid="ad-header-location"]'
-];
-
-  // 1. Próba standardowych selektorów
-  for (const selector of locationSelectors) {
-    const element = $(selector).first();
-    console.log(`Sprawdzam selektor ${selector}:`, element.length ? 'znaleziono' : 'nie znaleziono');
-    
-    if (element.length) {
-      const locationText = element.text().trim();
-      console.log(`Tekst znaleziony w ${selector}:`, locationText);
-      
-      if (locationText && locationText.length > 3) {
-        const normalizedLocation = normalizeAddress(locationText);
-        if (normalizedLocation) {
-          console.log(`Znormalizowana lokalizacja:`, normalizedLocation);
-          return normalizedLocation;
-        }
-      }
-    }
-  }
-
-  // 2. Próba danych z JSON-LD
-  console.log('Próbuję znaleźć dane w JSON-LD...');
-  const scriptLocation = extractLocationFromScript($);
-  if (scriptLocation) {
-    console.log('Znaleziono lokalizację w JSON-LD:', scriptLocation);
-    return normalizeAddress(scriptLocation);
-  }
-
-  // 3. Próba breadcrumbs
-  console.log('Próbuję znaleźć lokalizację w breadcrumbs...');
-  const breadcrumbsLocation = extractLocationFromBreadcrumbs($);
-  if (breadcrumbsLocation) {
-    console.log('Znaleziono lokalizację w breadcrumbs:', breadcrumbsLocation);
-    return normalizeAddress(breadcrumbsLocation);
-  }
-
-  // 4. Szukanie w tekście ogłoszenia
-  console.log('Próbuję znaleźć lokalizację w tekście ogłoszenia...');
-  const description = $('[data-cy="adPageDescription"]').text().trim();
-  const firstParagraph = description.split('\n')[0];
-  console.log('Pierwszy paragraf opisu:', firstParagraph);
-
-  console.log('Nie udało się znaleźć lokalizacji');
-  return 'Brak lokalizacji';
-};
-
 // Endpoint testowy
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
@@ -1019,10 +950,10 @@ if (cron) {
 // Keepalive dla darmowego planu Render
 setInterval(() => {
   console.log('Wykonuję ping serwera...');
-  fetch('https://houseapp-backend.onrender.com/')
+  axios.get('https://houseapp-backend.onrender.com/')
     .then(() => console.log('Ping successful'))
     .catch(error => console.error('Ping failed:', error));
-}, 14 * 60 * 1000); // co 14 minut
+}, 14 * 60 * 1000);
 
 // Uruchomienie serwera
 const port = process.env.PORT || 10000;
