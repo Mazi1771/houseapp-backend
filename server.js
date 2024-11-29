@@ -280,7 +280,7 @@ async function scrapeOtodom(url, retryCount = 3) {
     }
 
     const encodedUrl = encodeURIComponent(url);
-    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true&keep_headers=true&retry_404=true&country_code=pl`;
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true&keep_headers=true&retry_404=true&country_code=pl&session_number=${Date.now()}&premium=true`;
 
     console.log('Wysyłam request do ScraperAPI');
     
@@ -294,7 +294,33 @@ async function scrapeOtodom(url, retryCount = 3) {
         maxRedirects: 5,
         validateStatus: function (status) {
           return status >= 200 && status < 500;
-        }
+        },
+        // Dodajemy konfigurację HTTP agenta
+    httpAgent: new require('http').Agent({
+      keepAlive: true,
+      maxSockets: 1,
+      maxFreeSockets: 1,
+      timeout: 120000,
+      keepAliveMsecs: 3000
+    }),
+    // Dodajemy konfigurację HTTPS agenta
+    httpsAgent: new require('https').Agent({
+      keepAlive: true,
+      maxSockets: 1,
+      maxFreeSockets: 1,
+      timeout: 120000,
+      keepAliveMsecs: 3000
+    }),
+    // Dodajemy logikę ponownych prób
+    retry: 3,
+    retryDelay: (retryCount) => {
+      return retryCount * 2000; // zwiększający się delay między próbami
+    }
+  });
+
+  if (response.status !== 200) {
+    throw new Error(`Błąd HTTP: ${response.status}`);
+  }
       });
 
       if (response.status !== 200) {
@@ -460,16 +486,17 @@ async function scrapeOtodom(url, retryCount = 3) {
       return result;
 
     } catch (axiosError) {
-      console.error('Błąd podczas wykonywania requestu:', axiosError.message);
-      
-      if (retryCount > 0) {
-        console.log(`Ponawiam próbę (pozostało ${retryCount} prób)...`);
-        await new Promise(resolve => setTimeout(resolve, 2000));
-        return scrapeOtodom(url, retryCount - 1);
-      }
-      
-      throw axiosError;
-    }
+  console.error('Błąd podczas wykonywania requestu:', axiosError.message);
+  
+  if (retryCount > 0) {
+    const delayTime = (4 - retryCount) * 3000; // Progresywne opóźnienie
+    console.log(`Ponawiam próbę (pozostało ${retryCount} prób) za ${delayTime/1000} sekund...`);
+    await new Promise(resolve => setTimeout(resolve, delayTime));
+    return scrapeOtodom(url, retryCount - 1);
+  }
+  
+  throw axiosError;
+}
 
   } catch (error) {
     console.error('Szczegóły błędu scrapera:', {
