@@ -322,6 +322,16 @@ async function scrapeOtodom(url) {
 
     console.log('Rozpoczynam parsowanie HTML');
     const $ = cheerio.load(html);
+    console.log('Pobrany HTML:', html); 
+    $('*').each((i, el) => {
+  const element = $(el);
+  if (element.attr('class')) {
+    console.log('Znaleziona klasa:', element.attr('class'));
+  }
+  if (element.attr('data-cy')) {
+    console.log('Znaleziony atrybut data-cy:', element.attr('data-cy'));
+  }
+});
 
     // Sprawdzenie czy oferta jest archiwalna
     const isArchived = $('title').text().toLowerCase().includes('archiwalne');
@@ -495,23 +505,22 @@ const getLocation = ($) => {
   const title = $('h1').first().text().trim();
   console.log('Tytuł ogłoszenia:', title);
   
-  const locationSelectors = [
-    // Szczegółowy adres
+ const locationSelectors = [
+    // Nowe selektory
+    '.css-1h1zqwk',  // Nowy potencjalny selektor
+    '[data-cy="adPageLocation"]',
+    '[data-cy="locationLabel"]',
+    '.css-1huvh3q',  // Nowy potencjalny selektor
+    '.css-1k6nwej',  // Bez first-child
+    
+    // Stare selektory
     '[data-testid="location-name"]',
     '[data-cy="location-address"]',
     '[aria-label="Adres"]',
     '.css-17o5lod',
-    '[data-cy="adPageHeaderLocation"]',  // Dodany nowy selektor
-    
-    // Nagłówek z lokalizacją
-    '[data-testid="ad-header-location"]',
-    '.css-1k6nwej > div:first-child',
-    
-    // Dodatkowe selektory
-    '[data-cy="location-text"]',
-    '.e1k5sj2s0',
-    '.css-1h1zqwk'  // Dodany nowy selektor
-  ];
+    '[data-cy="adPageHeaderLocation"]',
+    '[data-testid="ad-header-location"]'
+];
 
   // 1. Próba standardowych selektorów
   for (const selector of locationSelectors) {
