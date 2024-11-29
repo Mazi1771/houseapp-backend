@@ -224,6 +224,10 @@ const PropertySchema = new mongoose.Schema({
   edited: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
+coordinates: {
+    lat: Number,
+    lng: Number
+  }
 });
 
 // Modele
