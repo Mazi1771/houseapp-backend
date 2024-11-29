@@ -9,12 +9,16 @@ const cron = require('node-cron');
 
 const app = express();
 
+
 // Lista dozwolonych origin'ów
 const allowedOrigins = [
   'https://houseapp-uhmg.vercel.app',
   'https://houseapp-uhmg-git-main-barteks-projects.vercel.app',
   'http://localhost:3000'
 ];
+// Middleware do parsowania JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
 
 // Konfiguracja CORS
 app.use(cors({
