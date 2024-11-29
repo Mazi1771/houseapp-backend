@@ -269,7 +269,215 @@ const auth = async (req, res, next) => {
 
 // Funkcja scrapowania
 
+
+async function scrapeOtodom(url, retryCount = 3) {
+  try {
+    console.log('Rozpoczynam scrapowanie:', url);
+    
+    const scrapingApiKey = process.env.SCRAPING_API_KEY;
+    if (!scrapingApiKey) {
+      console.error('Brak klucza API do scrapingu');
+      throw new Error('Błąd konfiguracji: brak klucza API do scrapingu');
+    }
+
+    const encodedUrl = encodeURIComponent(url);
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true&keep_headers=true&retry_404=true&country_code=pl&session_number=${Date.now()}&premium=true`;
+
+    console.log('Wysyłam request do ScraperAPI');
+
+    const httpAgent = new http.Agent({
+      keepAlive: true,
+      maxSockets: 1,
+      maxFreeSockets: 1,
+      timeout: 120000,
+      keepAliveMsecs: 3000
+    });
+
+    const httpsAgent = new https.Agent({
+      keepAlive: true,
+      maxSockets: 1,
+      maxFreeSockets: 1,
+      timeout: 120000,
+      keepAliveMsecs: 3000
+    });
+
+    try {
+      const response = await axios.get(apiUrl, {
+        timeout: 120000,
+        headers: {
+          'Accept-Language': 'pl-PL',
+          'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36'
+        },
+        maxRedirects: 5,
+        validateStatus: function (status) {
+          return status >= 200 && status < 500;
+        },
+        httpAgent,
+        httpsAgent,
+        retry: 3,
+        retryDelay: (retryCount) => {
+          return retryCount * 2000;
+        }
+      });
+
+      if (response.status !== 200) {
+        throw new Error(`Błąd HTTP: ${response.status}`);
+      }
+
+      const html = response.data;
+      if (!html) {
+        throw new Error('Otrzymano pustą odpowiedź');
+      }
+
+      console.log('Rozpoczynam parsowanie HTML');
+      const $ = cheerio.load(html);
+
+      // Inicjalizacja zmiennych
+      let area = null;
+      let rooms = null;
+      let plotArea = null;
+      let status = 'wybierz';
+      let location = '';
+
+      // Sprawdzenie czy oferta jest archiwalna
+      const isArchived = $('title').text().toLowerCase().includes('archiwalne');
+      if (isArchived) {
+        throw new Error('Oferta jest archiwalna lub została usunięta');
+      }
+
+      // Pobieranie tytułu
+      const title = $('h1').first().text().trim() ||
+                   $('[data-testid="ad-title"]').first().text().trim() ||
+                   $('[data-cy="adPageAdTitle"]').first().text().trim();
+      console.log('Znaleziony tytuł:', title);
+
+      // Pobieranie ceny
+      let priceText = '';
+      const priceSelectors = [
+        '[data-cy="adPageHeaderPrice"]',
+        '[data-testid="price"]',
+        '.css-8qi9av',
+        '.css-12hd9gg',
+        'div[data-cy="price.value"]'
+      ];
+
+      for (const selector of priceSelectors) {
+        const element = $(selector);
+        if (element.length) {
+          priceText = element.text().trim();
+          console.log(`Znaleziono cenę używając selektora ${selector}:`, priceText);
+          break;
+        }
+      }
       
+      const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+      console.log('Przetworzona cena:', price);
+
+      // Pobieranie parametrów z głównej sekcji
+      const mainSection = $('.css-1xbf5wd');
+      if (mainSection.length) {
+        const mainText = mainSection.text();
+        
+        // Powierzchnia
+        const areaMatch = mainText.match(/(\d+)m²/);
+        if (areaMatch) {
+          area = parseInt(areaMatch[1]);
+          console.log('Znaleziona powierzchnia:', area);
+        }
+        
+        // Liczba pokoi
+        const roomsMatch = mainText.match(/(\d+)\s*poko[ij]/i);
+        if (roomsMatch) {
+          rooms = parseInt(roomsMatch[1]);
+          console.log('Znaleziona liczba pokoi:', rooms);
+        }
+
+        // Stan
+        const stateMatch = mainText.match(/Stan wykończenia:([\wś\s]+)(?=Rynek|$)/);
+        if (stateMatch) {
+          status = stateMatch[1].trim().toLowerCase();
+          // Mapowanie stanów
+          if (status.includes('wykończenia')) status = 'do wykończenia';
+          if (status.includes('deweloperski')) status = 'stan deweloperski';
+          if (status.includes('remontu')) status = 'do remontu';
+          if (status.includes('zamieszkania')) status = 'do zamieszkania';
+          console.log('Znaleziony stan:', status);
+        }
+      }
+
+      // Pobieranie powierzchni działki
+      const plotSection = $('.css-t7cajz');
+      if (plotSection.length) {
+        const plotText = plotSection.text();
+        const plotMatch = plotText.match(/Powierzchnia działki:(\d+)\s*m²/);
+        if (plotMatch) {
+          plotArea = parseInt(plotMatch[1]);
+          console.log('Znaleziona powierzchnia działki:', plotArea);
+        }
+      }
+
+      // Pobieranie lokalizacji
+      const breadcrumbs = $('[data-cy="breadcrumb"]')
+        .map((_, el) => $(el).text().trim())
+        .get()
+        .filter(text => 
+          !text.includes('Nieruchomości') &&
+          !text.includes('Domy') &&
+          text.length > 2
+        );
+
+      if (breadcrumbs.length > 0) {
+        location = breadcrumbs.join(', ');
+        console.log('Lokalizacja z breadcrumbs:', location);
+      }
+
+      // Jeśli nie znaleziono lokalizacji w breadcrumbs, szukaj w tytule
+      if (!location) {
+        const titleText = $('[data-cy="adPageAdTitle"]').text();
+        if (titleText.includes('ul.') || titleText.includes('ulica')) {
+          const streetMatch = titleText.match(/ul\.\s*([\w\s]+)/i);
+          if (streetMatch) {
+            location = streetMatch[1].trim();
+            console.log('Lokalizacja z tytułu:', location);
+          }
+        }
+      }
+
+      // Pobieranie opisu
+      const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
+                         $('[data-testid="ad-description"]').first().text().trim();
+
+      // Zbieranie wszystkich parametrów
+      let allParameters = {};
+      $('.css-1xbf5wd div').each((_, element) => {
+        const text = $(element).text().trim();
+        const parts = text.split(':');
+        if (parts.length === 2) {
+          const [key, value] = parts;
+          allParameters[key.trim()] = value.trim();
+        }
+      });
+
+      // Tworzenie końcowego obiektu
+      const result = {
+        title: title || 'Brak tytułu',
+        price,
+        area,
+        plotArea,
+        rooms,
+        location: location || 'Brak lokalizacji',
+        description: description || '',
+        sourceUrl: url,
+        source: 'otodom',
+        isActive: true,
+        status,
+        lastChecked: new Date(),
+        details: allParameters
+      };
+
+      console.log('Wynik scrapowania:', result);
+      return result;
+
     } catch (axiosError) {
       console.error('Błąd podczas wykonywania requestu:', axiosError.message);
       
@@ -301,6 +509,9 @@ const auth = async (req, res, next) => {
     throw new Error(`Błąd podczas scrapowania: ${error.message}`);
   }
 }
+
+      
+    
 
 // Endpoint testowy
 app.get('/', (req, res) => {
