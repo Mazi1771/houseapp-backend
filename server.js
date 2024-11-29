@@ -220,26 +220,48 @@ async function scrapeOtodom(url) {
   try {
     console.log('Rozpoczynam scrapowanie:', url);
     
+    // Sprawdzenie klucza API
     const scrapingApiKey = process.env.SCRAPING_API_KEY;
     if (!scrapingApiKey) {
-      throw new Error('Brak klucza API do scrapingu');
+      console.error('Brak klucza API do scrapingu');
+      throw new Error('Błąd konfiguracji: brak klucza API do scrapingu');
     }
 
     const encodedUrl = encodeURIComponent(url);
     const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true`;
 
     console.log('Wysyłam request do ScraperAPI');
+    
+    // Request z rozszerzoną konfiguracją
     const response = await axios.get(apiUrl, {
-      timeout: 30000,
+      timeout: 60000,
       headers: {
         'Accept-Language': 'pl-PL'
+      },
+      maxRedirects: 5,
+      validateStatus: function (status) {
+        return status >= 200 && status < 500;
       }
     });
 
+    // Sprawdzenie statusu odpowiedzi
+    if (response.status !== 200) {
+      console.error('Błąd odpowiedzi ScraperAPI:', {
+        status: response.status,
+        statusText: response.statusText
+      });
+      throw new Error(`Błąd podczas pobierania danych: ${response.status}`);
+    }
+
     const html = response.data;
+    if (!html) {
+      throw new Error('Otrzymano pustą odpowiedź');
+    }
+
+    console.log('Rozpoczynam parsowanie HTML');
     const $ = cheerio.load(html);
 
-    // Sprawdź czy oferta jest archiwalna
+    // Sprawdzenie czy oferta jest archiwalna
     const isArchived = $('title').text().toLowerCase().includes('archiwalne');
     if (isArchived) {
       throw new Error('Oferta jest archiwalna lub została usunięta');
@@ -257,12 +279,15 @@ async function scrapeOtodom(url) {
     parameterSelectors.forEach(selector => {
       $(selector).each((_, element) => {
         let label, value;
+
+        // Struktura 1: div > div
         const divs = $(element).find('div');
         if (divs.length >= 2) {
           label = $(divs[0]).text().trim();
           value = $(divs[1]).text().trim();
         }
 
+        // Struktura 2: data-testid
         if (!label || !value) {
           const labelEl = $(element).find('[data-testid="table-label"]');
           const valueEl = $(element).find('[data-testid="table-value"]');
@@ -279,13 +304,13 @@ async function scrapeOtodom(url) {
       });
     });
 
-    // Tytuł
+    // Pobieranie tytułu
     const title = $('h1').first().text().trim() ||
                  $('[data-testid="ad-title"]').first().text().trim() ||
                  $('[data-cy="adPageHeader"]').first().text().trim();
     console.log('Znaleziony tytuł:', title);
 
-    // Cena
+    // Pobieranie ceny
     let priceText = '';
     const priceSelectors = [
       '[data-testid="price"]',
@@ -305,72 +330,126 @@ async function scrapeOtodom(url) {
     }
     
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+    console.log('Przetworzona cena:', price);
 
-    // Powierzchnia i pokoje
+    // Parsowanie powierzchni i pokoi
     let area = null;
     let rooms = null;
     let plotArea = null;
 
     Object.entries(allParameters).forEach(([key, value]) => {
       const keyLower = key.toLowerCase();
-      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki')) {
+      // Powierzchnia
+      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki') && !keyLower.includes('dzialki')) {
         const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           area = parseFloat(match[1].replace(',', '.'));
+          console.log('Znaleziona powierzchnia:', area);
         }
       }
-      else if (keyLower.includes('działki') || keyLower.includes('działka')) {
+      // Powierzchnia działki
+      else if (keyLower.includes('działki') || keyLower.includes('dzialki') || 
+               keyLower.includes('działka') || keyLower.includes('dzialka')) {
         const match = value.match(/(\d+[.,]?\d*)/);
         if (match) {
           plotArea = parseFloat(match[1].replace(',', '.'));
+          console.log('Znaleziona powierzchnia działki:', plotArea);
         }
       }
-      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje')) {
+      // Pokoje
+      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje') || keyLower.includes('liczba pokoi')) {
         const match = value.match(/(\d+)/);
         if (match) {
           rooms = parseInt(match[1]);
+          console.log('Znaleziona liczba pokoi:', rooms);
         }
       }
     });
 
-    // Lokalizacja
-    const location = getLocation($) || 'Brak lokalizacji';
+    // Pobieranie lokalizacji
+    const locationSelectors = [
+      '[data-testid="location-name"]',
+      '[data-testid="ad-header-location"]',
+      '.css-17o5lod',
+      '[aria-label="Adres"]'
+    ];
 
-    // Opis
+    let location = '';
+    for (const selector of locationSelectors) {
+      const element = $(selector);
+      if (element.length) {
+        location = element.text().trim();
+        console.log('Znaleziona lokalizacja:', location);
+        break;
+      }
+    }
+
+    // Jeśli nie znaleziono lokalizacji w podstawowych selektorach, szukaj w breadcrumbach
+    if (!location) {
+      const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
+        .map((_, el) => $(el).text().trim())
+        .get()
+        .filter(text => !text.includes('Ogłoszenia') && !text.includes('Nieruchomości'));
+      
+      if (breadcrumbs.length > 0) {
+        location = breadcrumbs.join(', ');
+        console.log('Lokalizacja z breadcrumbs:', location);
+      }
+    }
+
+    // Pobieranie opisu
     const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
                        $('[data-testid="ad-description"]').first().text().trim();
 
+    // Tworzenie końcowego obiektu
     const result = {
       title: title || 'Brak tytułu',
       price,
       area,
       plotArea,
       rooms,
-      location,
+      location: location || 'Brak lokalizacji',
       description: description || '',
       sourceUrl: url,
       source: 'otodom',
       isActive: true,
       status: 'wybierz',
       lastChecked: new Date(),
-      parameters: allParameters
+      details: allParameters // zachowujemy wszystkie znalezione parametry
     };
 
+    console.log('Wynik scrapowania:', result);
     return result;
 
   } catch (error) {
     console.error('Szczegóły błędu scrapera:', {
       message: error.message,
       stack: error.stack,
-      response: error.response?.data
+      response: error.response?.data,
+      status: error.response?.status
     });
 
+    // Rozszerzona obsługa błędów
+    if (error.code === 'ECONNABORTED') {
+      throw new Error('Przekroczono limit czasu żądania');
+    }
+    if (error.response?.status === 404) {
+      throw new Error('Nie znaleziono strony');
+    }
+    if (error.response?.status === 403) {
+      throw new Error('Brak dostępu do strony');
+    }
+    if (error.response?.status >= 500) {
+      throw new Error('Błąd serwera podczas pobierania danych');
+    }
     if (error.response?.status === 410 || error.message.includes('archiwalna')) {
       throw new Error('Oferta jest nieaktywna lub została usunięta');
     }
-    throw error;
+
+    throw new Error(`Błąd podczas scrapowania: ${error.message}`);
   }
 }
+
 
 // Pomocnicza funkcja do lokalizacji
 function getLocation($) {
