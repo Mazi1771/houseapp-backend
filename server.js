@@ -267,59 +267,32 @@ async function scrapeOtodom(url) {
       throw new Error('Oferta jest archiwalna lub została usunięta');
     }
 
-    // Zbieranie parametrów
-    let allParameters = {};
-    const parameterSelectors = [
-      '.css-1ccovha',
-      '[data-testid="ad-details-table"] > div',
-      '.css-kos6vh',
-      '.css-1k6nwej'
-    ];
-
-    parameterSelectors.forEach(selector => {
-      $(selector).each((_, element) => {
-        let label, value;
-
-        // Struktura 1: div > div
-        const divs = $(element).find('div');
-        if (divs.length >= 2) {
-          label = $(divs[0]).text().trim();
-          value = $(divs[1]).text().trim();
-        }
-
-        // Struktura 2: data-testid
-        if (!label || !value) {
-          const labelEl = $(element).find('[data-testid="table-label"]');
-          const valueEl = $(element).find('[data-testid="table-value"]');
-          if (labelEl.length && valueEl.length) {
-            label = labelEl.text().trim();
-            value = valueEl.text().trim();
-          }
-        }
-
-        if (label && value) {
-          allParameters[label] = value;
-          console.log(`Znaleziono parametr: ${label} = ${value}`);
-        }
-      });
-    });
-
     // Pobieranie tytułu
-    const title = $('h1').first().text().trim() ||
-                 $('[data-testid="ad-title"]').first().text().trim() ||
-                 $('[data-cy="adPageHeader"]').first().text().trim();
-    console.log('Znaleziony tytuł:', title);
+    const titleSelectors = [
+      'h1[data-cy="adPageHeader.title"]',
+      '[data-cy="adPageHeader"] h1',
+      'h1.css-46s0sq'
+    ];
+    
+    let title = '';
+    for (const selector of titleSelectors) {
+      const element = $(selector);
+      if (element.length) {
+        title = element.text().trim();
+        console.log('Znaleziony tytuł:', title);
+        break;
+      }
+    }
 
     // Pobieranie ceny
-    let priceText = '';
     const priceSelectors = [
-      '[data-testid="price"]',
       '[data-cy="adPageHeaderPrice"]',
-      '.css-8qi9av',
-      '.css-12hd9gg',
-      'div[data-cy="price.value"]'
+      'strong[data-cy="adPageHeaderPrice"]',
+      'strong.css-8qi9av',
+      'strong.css-t3wmkv'
     ];
 
+    let priceText = '';
     for (const selector of priceSelectors) {
       const element = $(selector);
       if (element.length) {
@@ -332,46 +305,68 @@ async function scrapeOtodom(url) {
     const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
     console.log('Przetworzona cena:', price);
 
-    // Parsowanie powierzchni i pokoi
+    // Zbieranie parametrów
+    let allParameters = {};
     let area = null;
     let rooms = null;
     let plotArea = null;
 
-    Object.entries(allParameters).forEach(([key, value]) => {
-      const keyLower = key.toLowerCase();
-      // Powierzchnia
-      if (keyLower.includes('powierzchnia') && !keyLower.includes('działki') && !keyLower.includes('dzialki')) {
-        const match = value.match(/(\d+[.,]?\d*)/);
-        if (match) {
-          area = parseFloat(match[1].replace(',', '.'));
-          console.log('Znaleziona powierzchnia:', area);
+    const parameterSelectors = [
+      '[data-cy="ad.description.table"] > div',
+      'div[role="list"] > div',
+      'div[data-testid="ad-details-table"] > div'
+    ];
+
+    parameterSelectors.forEach(selector => {
+      $(selector).each((_, element) => {
+        try {
+          // Dla nowej struktury Otodom
+          const row = $(element);
+          const label = row.find('div:first').text().trim();
+          const value = row.find('div:last').text().trim();
+
+          if (label && value) {
+            allParameters[label] = value;
+            console.log(`Znaleziono parametr: ${label} = ${value}`);
+
+            // Parsowanie powierzchni
+            if (label.toLowerCase().includes('powierzchnia') && !label.toLowerCase().includes('działki')) {
+              const match = value.match(/(\d+[.,]?\d*)/);
+              if (match) {
+                area = parseFloat(match[1].replace(',', '.'));
+                console.log('Znaleziona powierzchnia:', area);
+              }
+            }
+            
+            // Parsowanie powierzchni działki
+            if (label.toLowerCase().includes('działki') || label.toLowerCase().includes('działka')) {
+              const match = value.match(/(\d+[.,]?\d*)/);
+              if (match) {
+                plotArea = parseFloat(match[1].replace(',', '.'));
+                console.log('Znaleziona powierzchnia działki:', plotArea);
+              }
+            }
+
+            // Parsowanie liczby pokoi
+            if (label.toLowerCase().includes('pokoi') || label.toLowerCase().includes('pokoje') || label.toLowerCase().includes('liczba pokoi')) {
+              const match = value.match(/(\d+)/);
+              if (match) {
+                rooms = parseInt(match[1]);
+                console.log('Znaleziona liczba pokoi:', rooms);
+              }
+            }
+          }
+        } catch (error) {
+          console.error('Błąd podczas parsowania parametru:', error);
         }
-      }
-      // Powierzchnia działki
-      else if (keyLower.includes('działki') || keyLower.includes('dzialki') || 
-               keyLower.includes('działka') || keyLower.includes('dzialka')) {
-        const match = value.match(/(\d+[.,]?\d*)/);
-        if (match) {
-          plotArea = parseFloat(match[1].replace(',', '.'));
-          console.log('Znaleziona powierzchnia działki:', plotArea);
-        }
-      }
-      // Pokoje
-      else if (keyLower.includes('pokoi') || keyLower.includes('pokoje') || keyLower.includes('liczba pokoi')) {
-        const match = value.match(/(\d+)/);
-        if (match) {
-          rooms = parseInt(match[1]);
-          console.log('Znaleziona liczba pokoi:', rooms);
-        }
-      }
+      });
     });
 
     // Pobieranie lokalizacji
     const locationSelectors = [
+      '[data-cy="adPageHeader.address"]',
       '[data-testid="location-name"]',
-      '[data-testid="ad-header-location"]',
-      '.css-17o5lod',
-      '[aria-label="Adres"]'
+      '.css-1wr0c0f'
     ];
 
     let location = '';
@@ -384,7 +379,7 @@ async function scrapeOtodom(url) {
       }
     }
 
-    // Jeśli nie znaleziono lokalizacji w podstawowych selektorach, szukaj w breadcrumbach
+    // Jeśli nie znaleziono lokalizacji, spróbuj z breadcrumbs
     if (!location) {
       const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
         .map((_, el) => $(el).text().trim())
@@ -398,8 +393,29 @@ async function scrapeOtodom(url) {
     }
 
     // Pobieranie opisu
-    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
-                       $('[data-testid="ad-description"]').first().text().trim();
+    const descriptionSelectors = [
+      '[data-cy="adPageDescription"]',
+      'div[data-testid="ad-description"]',
+      '.css-1t507yq'
+    ];
+
+    let description = '';
+    for (const selector of descriptionSelectors) {
+      const element = $(selector).first();
+      if (element.length) {
+        description = element.text().trim();
+        break;
+      }
+    }
+
+    console.log('Debug informacje:');
+    console.log('Tytuł:', title);
+    console.log('Cena:', price);
+    console.log('Powierzchnia:', area);
+    console.log('Powierzchnia działki:', plotArea);
+    console.log('Pokoje:', rooms);
+    console.log('Lokalizacja:', location);
+    console.log('Długość opisu:', description?.length);
 
     // Tworzenie końcowego obiektu
     const result = {
@@ -415,7 +431,7 @@ async function scrapeOtodom(url) {
       isActive: true,
       status: 'wybierz',
       lastChecked: new Date(),
-      details: allParameters // zachowujemy wszystkie znalezione parametry
+      details: allParameters
     };
 
     console.log('Wynik scrapowania:', result);
@@ -429,7 +445,6 @@ async function scrapeOtodom(url) {
       status: error.response?.status
     });
 
-    // Rozszerzona obsługa błędów
     if (error.code === 'ECONNABORTED') {
       throw new Error('Przekroczono limit czasu żądania');
     }
