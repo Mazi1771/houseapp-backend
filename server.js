@@ -13,24 +13,18 @@ const app = express();
 const allowedOrigins = [
   'https://houseapp-uhmg.vercel.app',
   'https://houseapp-uhmg-git-main-barteks-projects.vercel.app',
-  'https://houseapp-uhmg-*-barteks-projects.vercel.app',
   'http://localhost:3000'
 ];
 
 // Konfiguracja CORS
 app.use(cors({
   origin: function(origin, callback) {
-    if (!origin) return callback(null, true);
-    
-    const isAllowed = allowedOrigins.some(allowedOrigin => {
-      if (allowedOrigin.includes('*')) {
-        const regex = new RegExp('^' + allowedOrigin.replace('*', '.*') + '$');
-        return regex.test(origin);
-      }
-      return allowedOrigin === origin;
-    });
+    // Pozwól na requesty bez origin (np. z Postman)
+    if (!origin) {
+      return callback(null, true);
+    }
 
-    if (isAllowed) {
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
       callback(null, true);
     } else {
       console.log('Niedozwolony origin:', origin);
@@ -39,14 +33,22 @@ app.use(cors({
   },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  exposedHeaders: ['Content-Range', 'X-Content-Range'],
-  maxAge: 600
+  allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
 
+// Middleware dla preflight requests
 app.options('*', cors());
-app.use(express.json());
 
+// Jedno middleware dla dodatkowych nagłówków
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  next();
+});
 // Konfiguracja MongoDB
 mongoose.connection.on('connected', () => {
   console.log('MongoDB połączone pomyślnie');
