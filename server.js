@@ -603,66 +603,98 @@ app.get('/api/properties', auth, async (req, res) => {
   }
 });
 
-// Scraping nowej nieruchomości
+// Endpoint scrapera
 app.post('/api/scrape', auth, async (req, res) => {
   try {
     const { url } = req.body;
     console.log('Otrzymany URL:', url);
     
+    // Walidacja URL
     if (!url) {
-      return res.status(400).json({ error: 'URL jest wymagany' });
+      return res.status(400).json({ 
+        error: 'URL jest wymagany',
+        details: 'Nie podano adresu URL do scrapowania'
+      });
     }
 
     if (!url.includes('otodom.pl')) {
-      return res.status(400).json({ error: 'Nieprawidłowy URL. Musi być z serwisu Otodom.' });
+      return res.status(400).json({ 
+        error: 'Nieprawidłowy URL',
+        details: 'URL musi być z serwisu Otodom'
+      });
     }
 
     try {
       // Scraping
+      console.log('Rozpoczynam scrapowanie...');
       const scrapedData = await scrapeOtodom(url);
       
       // Geocoding
       if (scrapedData.location && scrapedData.location !== 'Brak lokalizacji') {
+        console.log('Rozpoczynam geocoding dla lokalizacji:', scrapedData.location);
         const geoData = await geocodeAddress(scrapedData.location);
         if (geoData) {
+          console.log('Geocoding udany:', geoData);
           scrapedData.coordinates = geoData.coordinates;
           scrapedData.fullAddress = geoData.fullAddress;
           scrapedData.city = geoData.city;
           scrapedData.district = geoData.district;
           scrapedData.region = geoData.region;
+        } else {
+          console.log('Geocoding nie znalazł lokalizacji');
         }
       }
 
+      // Zapisywanie danych
       const defaultBoard = await Board.findOne({ owner: req.user._id });
-      
       if (!defaultBoard) {
-        return res.status(404).json({ error: 'Nie znaleziono domyślnej tablicy' });
+        return res.status(404).json({ 
+          error: 'Nie znaleziono tablicy',
+          details: 'Nie znaleziono domyślnej tablicy użytkownika'
+        });
       }
 
       const property = new Property({
         ...scrapedData,
         board: defaultBoard._id,
+        lastChecked: new Date()
       });
 
       await property.save();
+      console.log('Nieruchomość zapisana:', property._id);
+
       defaultBoard.properties.push(property._id);
       await defaultBoard.save();
+      console.log('Tablica zaktualizowana');
 
       res.json(property);
+
     } catch (scrapingError) {
-      if (scrapingError.message.includes('nieaktywna') || scrapingError.message.includes('archiwalna')) {
+      console.error('Błąd podczas scrapowania/geocodingu:', scrapingError);
+      
+      if (scrapingError.message.includes('nieaktywna') || 
+          scrapingError.message.includes('archiwalna')) {
         return res.status(400).json({ 
           error: 'Ta oferta jest już nieaktywna lub została usunięta. Spróbuj dodać inną ofertę.',
           details: scrapingError.message
         });
       }
+
+      // Lepsze komunikaty dla innych błędów
+      if (scrapingError.message.includes('ECONNABORTED')) {
+        return res.status(408).json({
+          error: 'Przekroczono limit czasu żądania',
+          details: 'Spróbuj ponownie za chwilę'
+        });
+      }
+
       throw scrapingError;
     }
   } catch (error) {
-    console.error('Błąd podczas scrapowania:', error);
+    console.error('Błąd ogólny:', error);
     res.status(500).json({
       error: 'Wystąpił błąd podczas pobierania danych',
-      details: error.message
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Spróbuj ponownie później'
     });
   }
 });
