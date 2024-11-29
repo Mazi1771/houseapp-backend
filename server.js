@@ -69,15 +69,25 @@ const normalizeAddress = (address) => {
 };
 
 const extractLocationFromBreadcrumbs = ($) => {
-  const breadcrumbs = $('[data-cy="breadcrumbs-link"]')
-    .map((_, el) => $(el).text().trim())
-    .get()
-    .filter(text => 
-      !text.includes('Ogłoszenia') && 
-      !text.includes('Nieruchomości') &&
-      !text.includes('Strona główna')
-    );
+  console.log('Rozpoczynam ekstrakcję z breadcrumbs...');
   
+  const breadcrumbs = $('[data-cy="breadcrumbs-container"] a, [data-cy="breadcrumbs-link"]')
+    .map((_, el) => {
+      const text = $(el).text().trim();
+      console.log('Znaleziony breadcrumb:', text);
+      return text;
+    })
+    .get()
+    .filter(text => {
+      const isValid = !text.includes('Ogłoszenia') && 
+                     !text.includes('Nieruchomości') &&
+                     !text.includes('Strona główna') &&
+                     text.length > 2;
+      console.log(`Breadcrumb "${text}": ${isValid ? 'zachowany' : 'odrzucony'}`);
+      return isValid;
+    });
+
+  console.log('Wszystkie znalezione breadcrumbs:', breadcrumbs);
   return breadcrumbs.length > 0 ? breadcrumbs.join(', ') : null;
 };
 
@@ -476,8 +486,12 @@ console.log('Znaleziona lokalizacja:', location);
 
 
 // Pomocnicza funkcja do lokalizacji
-function getLocation($) {
+const getLocation = ($) => {
   console.log('Rozpoczynam wydobywanie lokalizacji...');
+  
+  // Najpierw spróbujmy pobrać lokalizację z tytułu (często zawiera miasto)
+  const title = $('h1').first().text().trim();
+  console.log('Tytuł ogłoszenia:', title);
   
   const locationSelectors = [
     // Szczegółowy adres
@@ -485,6 +499,7 @@ function getLocation($) {
     '[data-cy="location-address"]',
     '[aria-label="Adres"]',
     '.css-17o5lod',
+    '[data-cy="adPageHeaderLocation"]',  // Dodany nowy selektor
     
     // Nagłówek z lokalizacją
     '[data-testid="ad-header-location"]',
@@ -492,40 +507,54 @@ function getLocation($) {
     
     // Dodatkowe selektory
     '[data-cy="location-text"]',
-    '.e1k5sj2s0'
+    '.e1k5sj2s0',
+    '.css-1h1zqwk'  // Dodany nowy selektor
   ];
 
   // 1. Próba standardowych selektorów
   for (const selector of locationSelectors) {
     const element = $(selector).first();
-    const locationText = element.text().trim();
+    console.log(`Sprawdzam selektor ${selector}:`, element.length ? 'znaleziono' : 'nie znaleziono');
     
-    if (locationText && locationText.length > 3) {
-      console.log(`Znaleziono lokalizację w selektorze ${selector}:`, locationText);
-      const normalizedLocation = normalizeAddress(locationText);
-      if (normalizedLocation) {
-        return normalizedLocation;
+    if (element.length) {
+      const locationText = element.text().trim();
+      console.log(`Tekst znaleziony w ${selector}:`, locationText);
+      
+      if (locationText && locationText.length > 3) {
+        const normalizedLocation = normalizeAddress(locationText);
+        if (normalizedLocation) {
+          console.log(`Znormalizowana lokalizacja:`, normalizedLocation);
+          return normalizedLocation;
+        }
       }
     }
   }
 
   // 2. Próba danych z JSON-LD
+  console.log('Próbuję znaleźć dane w JSON-LD...');
   const scriptLocation = extractLocationFromScript($);
   if (scriptLocation) {
     console.log('Znaleziono lokalizację w JSON-LD:', scriptLocation);
     return normalizeAddress(scriptLocation);
   }
 
-  // 3. Próba breadcrumbs jako ostateczność
+  // 3. Próba breadcrumbs
+  console.log('Próbuję znaleźć lokalizację w breadcrumbs...');
   const breadcrumbsLocation = extractLocationFromBreadcrumbs($);
   if (breadcrumbsLocation) {
     console.log('Znaleziono lokalizację w breadcrumbs:', breadcrumbsLocation);
     return normalizeAddress(breadcrumbsLocation);
   }
 
+  // 4. Szukanie w tekście ogłoszenia
+  console.log('Próbuję znaleźć lokalizację w tekście ogłoszenia...');
+  const description = $('[data-cy="adPageDescription"]').text().trim();
+  const firstParagraph = description.split('\n')[0];
+  console.log('Pierwszy paragraf opisu:', firstParagraph);
+
   console.log('Nie udało się znaleźć lokalizacji');
   return 'Brak lokalizacji';
-}
+};
 
 // Endpoint testowy
 app.get('/', (req, res) => {
