@@ -601,7 +601,84 @@ app.get('/api/properties', auth, async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// Zapraszanie użytkownika do tablicy
+app.post('/api/boards/:boardId/invite', auth, async (req, res) => {
+  try {
+    const { email, role } = req.body;
+    const board = await Board.findOne({ _id: req.params.boardId, owner: req.user._id });
 
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
+
+    const invitedUser = await User.findOne({ email });
+    if (!invitedUser) {
+      return res.status(404).json({ error: 'Nie znaleziono użytkownika o podanym emailu' });
+    }
+
+    // Sprawdź czy użytkownik nie jest już zaproszony
+    const existingShare = board.shared.find(share => 
+      share.user.toString() === invitedUser._id.toString()
+    );
+
+    if (existingShare) {
+      return res.status(400).json({ error: 'Ten użytkownik został już zaproszony' });
+    }
+
+    board.shared.push({
+      user: invitedUser._id,
+      role,
+      status: 'pending'
+    });
+
+    await board.save();
+
+    res.json({ message: 'Zaproszenie zostało wysłane' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Akceptacja/odrzucenie zaproszenia
+app.put('/api/boards/:boardId/invitation', auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const board = await Board.findOne({ 
+      _id: req.params.boardId,
+      'shared.user': req.user._id,
+      'shared.status': 'pending'
+    });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Zaproszenie nie zostało znalezione' });
+    }
+
+    const shareIndex = board.shared.findIndex(share => 
+      share.user.toString() === req.user._id.toString()
+    );
+
+    board.shared[shareIndex].status = status;
+    await board.save();
+
+    res.json({ message: 'Status zaproszenia został zaktualizowany' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Pobranie listy zaproszeń
+app.get('/api/invitations', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      'shared.user': req.user._id,
+      'shared.status': 'pending'
+    }).populate('owner', 'name email');
+
+    res.json(boards);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 // Endpoint scrapera
 app.post('/api/scrape', auth, async (req, res) => {
   try {
