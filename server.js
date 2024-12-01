@@ -500,6 +500,95 @@ app.get('/api/boards/default', auth, async (req, res) => {
     res.status(500).json({ error: 'Wystąpił błąd serwera' });
   }
 });
+//Endpoint do przenoszenia nieruchomości
+app.post('/api/properties/:propertyId/move', auth, async (req, res) => {
+  try {
+    const { targetBoardId } = req.body;
+
+    const property = await Property.findOne({
+      _id: req.params.propertyId,
+      board: { $in: req.user.boards }, // Użytkownik musi być właścicielem nieruchomości
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const targetBoard = await Board.findById(targetBoardId);
+    if (!targetBoard) {
+      return res.status(404).json({ error: 'Docelowa tablica nie została znaleziona' });
+    }
+
+    // Usuwamy nieruchomość ze starej tablicy
+    await Board.updateOne(
+      { _id: property.board },
+      { $pull: { properties: property._id } }
+    );
+
+    // Przenosimy nieruchomość do nowej tablicy
+    property.board = targetBoard._id;
+    await property.save();
+
+    // Dodajemy nieruchomość do nowej tablicy
+    targetBoard.properties.push(property._id);
+    await targetBoard.save();
+
+    res.json({ message: 'Nieruchomość została przeniesiona' });
+  } catch (error) {
+    console.error('Błąd podczas przenoszenia nieruchomości:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas przenoszenia nieruchomości' });
+  }
+});
+//Endpoint do kopiowania nieruchomości
+app.post('/api/properties/:propertyId/copy', auth, async (req, res) => {
+  try {
+    const { targetBoardId } = req.body;
+
+    const property = await Property.findOne({
+      _id: req.params.propertyId,
+      board: { $in: req.user.boards }, // Użytkownik musi być właścicielem nieruchomości
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const targetBoard = await Board.findById(targetBoardId);
+    if (!targetBoard) {
+      return res.status(404).json({ error: 'Docelowa tablica nie została znaleziona' });
+    }
+
+    // Tworzymy nową nieruchomość z tymi samymi danymi
+    const newProperty = new Property({
+      ...property.toObject(),
+      _id: undefined, // MongoDB wygeneruje nowe ID
+      board: targetBoard._id,
+      createdAt: new Date(),
+    });
+    await newProperty.save();
+
+    // Dodajemy nową nieruchomość do docelowej tablicy
+    targetBoard.properties.push(newProperty._id);
+    await targetBoard.save();
+
+    res.json({ message: 'Nieruchomość została skopiowana', property: newProperty });
+  } catch (error) {
+    console.error('Błąd podczas kopiowania nieruchomości:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas kopiowania nieruchomości' });
+  }
+});
+// Endpoint do pobierania tablic
+app.get('/api/boards', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .populate('boards')
+      .populate('sharedBoards');
+    res.json({ boards: user.boards, sharedBoards: user.sharedBoards });
+  } catch (error) {
+    res.status(500).json({ error: 'Błąd podczas pobierania tablic' });
+  }
+});
+
 
 // ===== AUTORYZACJA =====
 // Rejestracja
