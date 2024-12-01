@@ -487,6 +487,19 @@ async function scrapeOtodom(url, retryCount = 3) {
 app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
 });
+//End default Tablicy
+app.get('/api/boards/default', auth, async (req, res) => {
+  try {
+    const defaultBoard = await Board.findOne({ owner: req.user._id });
+    if (!defaultBoard) {
+      return res.status(404).json({ error: 'Tablica domyślna nie została znaleziona' });
+    }
+    res.json(defaultBoard);
+  } catch (error) {
+    console.error('Błąd przy pobieraniu tablicy domyślnej:', error);
+    res.status(500).json({ error: 'Wystąpił błąd serwera' });
+  }
+});
 
 // ===== AUTORYZACJA =====
 // Rejestracja
