@@ -182,13 +182,21 @@ const BoardSchema = new mongoose.Schema({
       type: String,
       enum: ['viewer', 'editor'],
       default: 'viewer'
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'accepted', 'rejected'],
+      default: 'pending'
+    },
+    invitedAt: {
+      type: Date,
+      default: Date.now
     }
   }],
   properties: [{
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Property'
   }],
-  isPrivate: { type: Boolean, default: true },
   createdAt: { type: Date, default: Date.now }
 });
 
