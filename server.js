@@ -1,956 +1,1139 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { Menu, User, Search, Home, RefreshCw, Settings, LogOut, Map, Grid, Mail } from 'lucide-react';
-import PropertyForm from './components/PropertyForm';
-import PropertyEditForm from './components/PropertyEditForm';
-import Login from './components/Login';
-import Register from './components/Register';
-import PriceHistoryChart from './components/PriceHistoryChart';
-import InvitationsView from './components/InvitationsView';
-import BoardSharing from './components/BoardSharing';
-import MapView from './components/MapView';
+const express = require('express');
+const cors = require('cors');
+const mongoose = require('mongoose');
+const bcrypt = require('bcryptjs');
+const jwt = require('jsonwebtoken');
+const axios = require('axios');
+const cheerio = require('cheerio');
+const cron = require('node-cron');
+const http = require('http');    // Dodaj ten import
+const https = require('https');  // Dodaj ten import
+const { geocodeAddress } = require('./services/geocoding');
+const app = express();
 
-function App() {
-  // ===== STANY APLIKACJI =====
-  const [isFormVisible, setIsFormVisible] = useState(false);
-  const [properties, setProperties] = useState([]);
-  const [editingProperty, setEditingProperty] = useState(null);
-  const [url, setUrl] = useState('');
-  const [isLoading, setIsLoading] = useState(false);
-  const [sortBy, setSortBy] = useState(null);
-  const [expandedProperty, setExpandedProperty] = useState(null);
-  const [isRefreshing, setIsRefreshing] = useState(false);
-  const [refreshProgress, setRefreshProgress] = useState(null);
-  const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false);
-  const [viewMode, setViewMode] = useState('grid');
-  const [boardViewType, setBoardViewType] = useState('own');
-  const [filters, setFilters] = useState({
-    priceMin: '',
-    priceMax: '',
-    areaMin: '',
-    areaMax: '',
-    status: '',
-    rating: '',
-  });
-  const [isAuthenticated, setIsAuthenticated] = useState(false);
-  const [user, setUser] = useState(null);
-  const [authMode, setAuthMode] = useState('login');
-  const [isLoadingProperties, setIsLoadingProperties] = useState(true);
-  const [isFiltersVisible, setIsFiltersVisible] = useState(false);
-  const [showInvitations, setShowInvitations] = useState(false);
-  const [currentBoard, setCurrentBoard] = useState(null);
-  const [boards, setBoards] = useState([]);
-  const [sharedBoards, setSharedBoards] = useState([]);
-  const [isShareBoardVisible, setIsShareBoardVisible] = useState(false);
-  const editFormRef = useRef(null);
 
-  // ===== EFEKTY =====
-  useEffect(() => {
-    const fetchBoards = async () => {
-      const token = localStorage.getItem('token');
-      try {
-        const response = await fetch('https://houseapp-backend.onrender.com/api/boards', {
-          headers: {
-            'Authorization': `Bearer ${token}`,
-            'Content-Type': 'application/json',
-          },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setBoards(data.boards);
-          setSharedBoards(data.sharedBoards);
-        }
-      } catch (error) {
-        console.error('Błąd podczas pobierania tablic:', error);
-      }
-    };
-    
-    if (isAuthenticated) {
-      fetchBoards();
+// Lista dozwolonych origin'ów
+const allowedOrigins = [
+  'https://houseapp-uhmg.vercel.app',
+  'https://houseapp-uhmg-git-main-barteks-projects.vercel.app',
+  'http://localhost:3000'
+];
+// Middleware do parsowania JSON
+app.use(express.json());
+app.use(express.urlencoded({ extended: true }));
+
+// Konfiguracja CORS
+app.use(cors({
+  origin: function(origin, callback) {
+    // Pozwól na requesty bez origin (np. z Postman)
+    if (!origin) {
+      return callback(null, true);
     }
-  }, [isAuthenticated]);
 
-  useEffect(() => {
-    if (!isAuthenticated) return;
-
-    const fetchDefaultBoard = async () => {
-      const token = localStorage.getItem('token');
-      try {
-        const response = await fetch('https://houseapp-backend.onrender.com/api/boards/default', {
-          headers: { 'Authorization': `Bearer ${token}` },
-        });
-        if (response.ok) {
-          const data = await response.json();
-          setCurrentBoard(data);
-        }
-      } catch (error) {
-        console.error('Błąd podczas pobierania tablicy domyślnej:', error);
-      }
-    };
-
-    fetchDefaultBoard();
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    const queryParams = new URLSearchParams(window.location.search);
-    const urlParam = queryParams.get('url');
-    
-    if (urlParam && isAuthenticated) {
-      setUrl(urlParam);
-      setIsFormVisible(true);
-      window.scrollTo(0, 0);
-    }
-  }, [isAuthenticated]);
-
-  useEffect(() => {
-    const token = localStorage.getItem('token');
-    const savedUser = localStorage.getItem('user');
-    if (token && savedUser) {
-      setIsAuthenticated(true);
-      setUser(JSON.parse(savedUser));
-      fetchProperties();
+    if (allowedOrigins.indexOf(origin) !== -1 || process.env.NODE_ENV === 'development') {
+      callback(null, true);
     } else {
-      setIsLoadingProperties(false);
+      console.log('Niedozwolony origin:', origin);
+      callback(new Error('Not allowed by CORS'));
     }
-  }, []);
+  },
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length', 'X-Requested-With'],
+  exposedHeaders: ['Content-Range', 'X-Content-Range']
+}));
 
-  useEffect(() => {
-    if (isAuthenticated) {
-      const interval = setInterval(() => {
-        fetchProperties();
-      }, 5 * 60 * 1000);
+// Middleware dla preflight requests
+app.options('*', cors());
 
-      return () => clearInterval(interval);
-    }
-  }, [isAuthenticated]);
-  // ===== FUNKCJE POMOCNICZE =====
-  const fetchProperties = async () => {
-    try {
-      setIsLoadingProperties(true);
-      const token = localStorage.getItem('token');
-      const response = await fetch('https://houseapp-backend.onrender.com/api/properties', {
-        method: 'GET',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json'
-        },
-        credentials: 'include'
-      });
-        
-      if (response.ok) {
-        const data = await response.json();
-        setProperties(data);
-      } else {
-        const errorData = await response.json();
-        if (response.status === 401) {
-          handleLogout();
+// Jedno middleware dla dodatkowych nagłówków
+app.use((req, res, next) => {
+  const origin = req.headers.origin;
+  if (allowedOrigins.includes(origin)) {
+    res.header('Access-Control-Allow-Origin', origin);
+  }
+  
+  next();
+});
+// Konfiguracja MongoDB
+mongoose.connection.on('connected', () => {
+  console.log('MongoDB połączone pomyślnie');
+});
+
+mongoose.connection.on('error', (err) => {
+  console.error('Błąd połączenia MongoDB:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB rozłączone');
+});
+//Funcja pod Scrapera
+const normalizeAddress = (address) => {
+  if (!address) return null;
+  return address
+    .replace(/\s+/g, ' ')
+    .trim()
+    .replace(/,\s*$/, '');
+};
+
+const extractLocationFromScript = ($) => {
+  try {
+    const scripts = $('script[type="application/ld+json"]');
+    let locationData = null;
+
+    scripts.each((_, script) => {
+      try {
+        const data = JSON.parse($(script).html());
+        if (data && data.address) {
+          locationData = data.address;
         }
+      } catch (e) {
+        console.log('Błąd parsowania JSON-LD:', e);
       }
-    } catch (error) {
-      console.error('Błąd podczas pobierania danych:', error);
-    } finally {
-      setIsLoadingProperties(false);
-    }
-  };
-
-  const handleEditClick = (property) => {
-    setEditingProperty(property);
-    setExpandedProperty(null);
-    setTimeout(() => {
-      editFormRef.current?.scrollIntoView({ 
-        behavior: 'smooth',
-        block: 'start'
-      });
-    }, 100);
-  };
-
-  const handleLogin = (data) => {
-    localStorage.setItem('token', data.token);
-    localStorage.setItem('user', JSON.stringify(data.user));
-    setIsAuthenticated(true);
-    setUser(data.user);
-    fetchProperties();
-  };
-
-  const handleRegister = (data) => {
-    setIsAuthenticated(true);
-    setUser(data.user);
-    fetchProperties();
-  };
-
-  const handleLogout = () => {
-    localStorage.removeItem('token');
-    localStorage.removeItem('user');
-    setIsAuthenticated(false);
-    setUser(null);
-    setProperties([]);
-    setExpandedProperty(null);
-  };
-
-  const handleScrape = async () => {
-    if (!url) return;
-    setIsLoading(true);
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('https://houseapp-backend.onrender.com/api/scrape', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        body: JSON.stringify({ url })
-      });
-      
-      const data = await response.json();
-      
-      if (!response.ok) {
-        if (response.status === 400 && data.error.includes('nieaktywna')) {
-          alert('Ta oferta jest już nieaktywna lub została usunięta. Spróbuj dodać inną ofertę.');
-        } else {
-          alert(data.error || 'Wystąpił błąd podczas pobierania danych');
-        }
-        return;
-      }
-
-      setProperties([data, ...properties]);
-      setUrl('');
-      setIsFormVisible(false);
-    } catch (error) {
-      console.error('Błąd:', error);
-      alert('Wystąpił błąd podczas komunikacji z serwerem');
-    } finally {
-      setIsLoading(false);
-    }
-  };
-
-  const handleRating = async (propertyId, rating) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${propertyId}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include',
-        body: JSON.stringify({ rating })
-      });
-
-      if (response.ok) {
-        const updatedProperty = await response.json();
-        setProperties(properties.map(p => 
-          p._id === propertyId ? updatedProperty : p
-        ));
-      }
-    } catch (error) {
-      console.error('Błąd podczas aktualizacji oceny:', error);
-    }
-  };
-
-  const handleDelete = async (propertyId) => {
-    if (!window.confirm('Czy na pewno chcesz usunąć to ogłoszenie?')) {
-      return;
-    }
-    
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${propertyId}`, {
-        method: 'DELETE',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        setProperties(properties.filter(p => p._id !== propertyId));
-        setExpandedProperty(null);
-      } else {
-        alert('Nie udało się usunąć ogłoszenia');
-      }
-    } catch (error) {
-      alert('Wystąpił błąd podczas usuwania ogłoszenia');
-    }
-  };
-
-  const handleMoveProperty = async (propertyId, targetBoardId) => {
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${propertyId}/move`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ targetBoardId }),
-      });
-
-      if (response.ok) {
-        alert('Nieruchomość została przeniesiona');
-        fetchProperties();
-      } else {
-        const data = await response.json();
-        alert(data.error || 'Nie udało się przenieść nieruchomości');
-      }
-    } catch (error) {
-      console.error('Błąd podczas przenoszenia nieruchomości:', error);
-    }
-  };
-
-  const handleCopyProperty = async (propertyId, targetBoardId) => {
-    const token = localStorage.getItem('token');
-    try {
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${propertyId}/copy`, {
-        method: 'POST',
-        headers: {
-          'Authorization': `Bearer ${token}`,
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ targetBoardId }),
-      });
-
-      if (response.ok) {
-        alert('Nieruchomość została skopiowana');
-        fetchProperties();
-      } else {
-        const data = await response.json();
-        alert(data.error || 'Nie udało się skopiować nieruchomości');
-      }
-    } catch (error) {
-      console.error('Błąd podczas kopiowania nieruchomości:', error);
-    }
-  };
-  const handleRefreshProperty = async (propertyId) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${propertyId}/refresh`, {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        setProperties(properties.map(p => 
-          p._id === propertyId ? data.property : p
-        ));
-        alert('Nieruchomość została zaktualizowana');
-      }
-    } catch (error) {
-      console.error('Błąd podczas odświeżania:', error);
-      alert('Wystąpił błąd podczas aktualizacji');
-    }
-  };
-
-  const handleRefreshAll = async () => {
-    if (!window.confirm('Czy chcesz zaktualizować wszystkie nieruchomości? To może potrwać kilka minut.')) {
-      return;
-    }
-
-    setIsRefreshing(true);
-    setRefreshProgress({ current: 0, total: properties.length });
-
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch('https://houseapp-backend.onrender.com/api/properties/refresh-all', {
-        method: 'POST',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include'
-      });
-
-      if (response.ok) {
-        const data = await response.json();
-        await fetchProperties();
-        alert(`Zaktualizowano ${data.updated} nieruchomości`);
-      }
-    } catch (error) {
-      console.error('Błąd podczas odświeżania wszystkich nieruchomości:', error);
-      alert('Wystąpił błąd podczas aktualizacji');
-    } finally {
-      setIsRefreshing(false);
-      setRefreshProgress(null);
-    }
-  };
-
-  const handleSaveEdit = async (updatedData) => {
-    try {
-      const token = localStorage.getItem('token');
-      const response = await fetch(`https://houseapp-backend.onrender.com/api/properties/${editingProperty._id}`, {
-        method: 'PUT',
-        headers: {
-          'Content-Type': 'application/json',
-          'Authorization': `Bearer ${token}`
-        },
-        credentials: 'include',
-        body: JSON.stringify(updatedData)
-      });
-
-      if (response.ok) {
-        const updatedProperty = await response.json();
-        setProperties(properties.map(p => 
-          p._id === editingProperty._id ? updatedProperty : p
-        ));
-        setEditingProperty(null);
-      } else {
-        const errorData = await response.json();
-        alert(errorData.error || 'Wystąpił błąd podczas aktualizacji');
-      }
-    } catch (error) {
-      alert('Wystąpił błąd podczas aktualizacji');
-    }
-  };
-
-  const getFilteredAndSortedProperties = () => {
-    let filtered = properties.filter(property => {
-      const matchesPrice = (!filters.priceMin || property.price >= Number(filters.priceMin)) &&
-                          (!filters.priceMax || property.price <= Number(filters.priceMax));
-                          
-      const matchesArea = (!filters.areaMin || property.area >= Number(filters.areaMin)) &&
-                         (!filters.areaMax || property.area <= Number(filters.areaMax));
-                         
-      const matchesStatus = !filters.status || property.status === filters.status;
-      
-      const matchesRating = !filters.rating || property.rating === filters.rating;
-
-      return matchesPrice && matchesArea && matchesStatus && matchesRating;
     });
 
-    if (sortBy) {
-      filtered.sort((a, b) => {
-        switch (sortBy) {
-          case 'price-asc':
-            return (a.price || 0) - (b.price || 0);
-          case 'price-desc':
-            return (b.price || 0) - (a.price || 0);
-          case 'area-asc':
-            return (a.area || 0) - (b.area || 0);
-          case 'area-desc':
-            return (b.area || 0) - (a.area || 0);
-          case 'date-asc':
-            return new Date(a.createdAt) - new Date(b.createdAt);
-          case 'date-desc':
-            return new Date(b.createdAt) - new Date(a.createdAt);
-          default:
-            return 0;
-        }
+    if (locationData) {
+      const parts = [];
+      if (locationData.streetAddress) parts.push(locationData.streetAddress);
+      if (locationData.addressLocality) parts.push(locationData.addressLocality);
+      if (locationData.addressRegion) parts.push(locationData.addressRegion);
+      return parts.join(', ');
+    }
+  } catch (e) {
+    console.log('Błąd wydobywania lokalizacji ze skryptu:', e);
+  }
+  return null;
+};
+const extractLocationFromBreadcrumbs = ($) => {
+  const breadcrumbs = $('[data-cy="breadcrumb-link"]')
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(text => 
+      !text.includes('Ogłoszenia') && 
+      !text.includes('Nieruchomości')
+    );
+  
+  return breadcrumbs.length > 0 ? breadcrumbs.join(', ') : null;
+};
+// Funkcja połączenia z MongoDB
+const connectDB = async () => {
+  try {
+    const mongoURI = process.env.MONGODB_URI;
+    console.log('Próba połączenia z MongoDB...');
+    console.log('URI present:', !!mongoURI);
+
+    if (!mongoURI) {
+      throw new Error('Brak MONGODB_URI w zmiennych środowiskowych');
+    }
+
+    await mongoose.connect(mongoURI, {
+      useNewUrlParser: true,
+      useUnifiedTopology: true,
+      serverSelectionTimeoutMS: 5000,
+      socketTimeoutMS: 45000,
+      family: 4
+    });
+
+    console.log('Połączenie z MongoDB ustanowione');
+  } catch (err) {
+    console.error('Błąd podczas łączenia z MongoDB:', err);
+    setTimeout(connectDB, 5000);
+  }
+};
+
+// Inicjalizacja połączenia
+connectDB();
+
+// Automatyczne ponowne połączenie
+mongoose.connection.on('disconnected', () => {
+  console.log('MongoDB rozłączone - próba ponownego połączenia...');
+  setTimeout(connectDB, 5000);
+});
+// Schematy
+const PriceHistorySchema = new mongoose.Schema({
+  price: { type: Number, required: true },
+  date: { type: Date, default: Date.now }
+});
+
+const UserSchema = new mongoose.Schema({
+  email: { type: String, required: true, unique: true },
+  password: { type: String, required: true },
+  name: { type: String },
+  boards: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Board'
+  }],
+  createdAt: { type: Date, default: Date.now }
+});
+
+const BoardSchema = new mongoose.Schema({
+  name: { type: String, required: true },
+  owner: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
+  shared: [{
+    user: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User'
+    },
+    role: {
+      type: String,
+      enum: ['viewer', 'editor'],
+      default: 'viewer'
+    },
+    status: {
+      type: String,
+      enum: ['pending', 'accepted', 'rejected'],
+      default: 'pending'
+    },
+    invitedAt: {
+      type: Date,
+      default: Date.now
+    }
+  }],
+  properties: [{
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Property'
+  }],
+  createdAt: { type: Date, default: Date.now }
+});
+
+const PropertySchema = new mongoose.Schema({
+  title: String,
+  price: { type: Number, default: null, required: false },
+  priceHistory: [PriceHistorySchema],
+  area: { type: Number, default: null, required: false },
+  plotArea: { type: Number, default: null, required: false },
+  rooms: { type: Number, default: null, required: false },
+  location: { type: String, default: '' },
+  description: { type: String, default: '' },
+  status: {
+    type: String,
+    enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
+    default: 'wybierz'
+  },
+  rating: {
+    type: String,
+    enum: ['favorite', 'interested', 'not_interested', null],
+    default: null
+  },
+  coordinates: {                     // Dodajemy pole coordinates
+    lat: { type: Number },
+    lng: { type: Number }
+  },
+  isActive: { type: Boolean, default: true },
+  lastChecked: { type: Date, default: Date.now },
+  details: { type: Object, default: {} },
+  source: String,
+  sourceUrl: String,
+  board: {
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Board',
+    required: true
+  },
+  edited: { type: Boolean, default: false },
+  createdAt: { type: Date, default: Date.now },
+  updatedAt: { type: Date, default: Date.now }
+});
+
+// Modele
+const User = mongoose.model('User', UserSchema);
+const Board = mongoose.model('Board', BoardSchema);
+const Property = mongoose.model('Property', PropertySchema);
+
+// Middleware autoryzacji
+const auth = async (req, res, next) => {
+  try {
+    const authHeader = req.header('Authorization');
+    console.log('Auth header:', authHeader);
+
+    if (!authHeader || !authHeader.startsWith('Bearer ')) {
+      throw new Error('Brak tokenu autoryzacji');
+    }
+
+    const token = authHeader.replace('Bearer ', '');
+    console.log('Token otrzymany:', token ? 'Jest' : 'Brak');
+
+    try {
+      const decoded = jwt.verify(token, process.env.JWT_SECRET);
+      console.log('Token zdekodowany:', decoded);
+
+      const user = await User.findOne({ _id: decoded.userId });
+      if (!user) {
+        throw new Error('Nie znaleziono użytkownika');
+      }
+
+      req.user = user;
+      req.token = token;
+      next();
+    } catch (error) {
+      console.error('Błąd weryfikacji tokenu:', error);
+      throw new Error('Token nieprawidłowy lub wygasł');
+    }
+  } catch (error) {
+    console.error('Błąd autoryzacji:', error.message);
+    res.status(401).json({ 
+      error: 'Proszę się zalogować', 
+      details: error.message 
+    });
+  }
+};
+
+// Funkcja scrapowania
+
+
+async function scrapeOtodom(url, retryCount = 3) {
+  try {
+    console.log('Rozpoczynam scrapowanie:', url);
+    
+    const scrapingApiKey = process.env.SCRAPING_API_KEY;
+    if (!scrapingApiKey) {
+      console.error('Brak klucza API do scrapingu');
+      throw new Error('Błąd konfiguracji: brak klucza API do scrapingu');
+    }
+
+    const encodedUrl = encodeURIComponent(url);
+    const apiUrl = `http://api.scraperapi.com?api_key=${scrapingApiKey}&url=${encodedUrl}&render=true&keep_headers=true&retry_404=true&country_code=pl`;
+
+    console.log('Wysyłam request do ScraperAPI');
+    
+    const response = await axios.get(apiUrl, {
+      timeout: 60000,
+      headers: {
+        'Accept-Language': 'pl-PL'
+      },
+      maxRedirects: 5,
+      validateStatus: function (status) {
+        return status >= 200 && status < 500;
+      }
+    });
+
+    if (response.status !== 200) {
+      throw new Error(`Błąd podczas pobierania danych: ${response.status}`);
+    }
+
+    const html = response.data;
+    if (!html) {
+      throw new Error('Otrzymano pustą odpowiedź');
+    }
+
+    console.log('Rozpoczynam parsowanie HTML');
+    const $ = cheerio.load(html);
+
+    const isArchived = $('title').text().toLowerCase().includes('archiwalne');
+    if (isArchived) {
+      throw new Error('Oferta jest archiwalna lub została usunięta');
+    }
+
+    // Pobieranie tytułu
+    const title = $('h1').first().text().trim() ||
+                 $('[data-testid="ad-title"]').first().text().trim() ||
+                 $('[data-cy="adPageAdTitle"]').first().text().trim();
+    console.log('Znaleziony tytuł:', title);
+
+    // Pobieranie ceny
+    let priceText = '';
+    const priceSelectors = [
+      '[data-cy="adPageHeaderPrice"]',
+      '[data-testid="price"]',
+      '.css-8qi9av',
+      '.css-12hd9gg',
+      'div[data-cy="price.value"]'
+    ];
+
+    for (const selector of priceSelectors) {
+      const element = $(selector);
+      if (element.length) {
+        priceText = element.text().trim();
+        console.log(`Znaleziono cenę używając selektora ${selector}:`, priceText);
+        break;
+      }
+    }
+    
+    const price = priceText ? parseInt(priceText.replace(/[^\d]/g, '')) : null;
+    console.log('Przetworzona cena:', price);
+
+    // Inicjalizacja zmiennych
+    let area = null;
+    let rooms = null;
+    let plotArea = null;
+    let status = 'wybierz';  // Domyślna wartość
+
+    // Pobieranie parametrów z głównej sekcji
+    const mainSection = $('.css-1xbf5wd');
+    if (mainSection.length) {
+      const mainText = mainSection.text();
+      
+      // Powierzchnia
+      const areaMatch = mainText.match(/(\d+)m²/);
+      if (areaMatch) {
+        area = parseInt(areaMatch[1]);
+        console.log('Znaleziona powierzchnia:', area);
+      }
+      
+      // Liczba pokoi
+      const roomsMatch = mainText.match(/(\d+)\s*poko[ij]/i);
+      if (roomsMatch) {
+        rooms = parseInt(roomsMatch[1]);
+        console.log('Znaleziona liczba pokoi:', rooms);
+      }
+
+      // Stan
+      const stateMatch = mainText.match(/Stan wykończenia:([\wś\s]+)(?=Rynek|$)/);
+      if (stateMatch) {
+        const stateText = stateMatch[1].trim().toLowerCase();
+        // Mapowanie stanów
+        if (stateText.includes('wykończenia')) status = 'do wykończenia';
+        else if (stateText.includes('deweloperski')) status = 'stan deweloperski';
+        else if (stateText.includes('remontu')) status = 'do remontu';
+        else if (stateText.includes('zamieszkania')) status = 'do zamieszkania';
+        else status = 'wybierz';  // Dla wszystkich innych przypadków
+        console.log('Znaleziony stan:', status);
+      }
+    }
+
+    // Pobieranie powierzchni działki
+    const plotSection = $('.css-t7cajz');
+    if (plotSection.length) {
+      const plotText = plotSection.text();
+      const plotMatch = plotText.match(/Powierzchnia działki:(\d+)\s*m²/);
+      if (plotMatch) {
+        plotArea = parseInt(plotMatch[1]);
+        console.log('Znaleziona powierzchnia działki:', plotArea);
+      }
+    }
+
+    // Pobieranie lokalizacji
+    const breadcrumbs = $('[data-cy="breadcrumb"]')
+      .map((_, el) => $(el).text().trim())
+      .get()
+      .filter(text => 
+        !text.includes('Dom na sprzedaż') &&
+        !text.includes('Rynek') &&
+        !text.includes('pokoje') &&
+        !text.includes('Ogłoszenia') &&
+        !text.includes('Nieruchomości') &&
+        text.length > 2
+      );
+
+    let location = '';
+    if (breadcrumbs.length > 0) {
+      location = breadcrumbs
+        .filter(text => text.includes('województwo') || 
+                       text.includes('powiat') || 
+                       text.includes('gmina') || 
+                       !text.includes(','))
+        .join(', ');
+    }
+
+    // Pobieranie opisu
+    const description = $('[data-cy="adPageDescription"]').first().text().trim() ||
+                       $('[data-testid="ad-description"]').first().text().trim();
+
+    // Zbieranie wszystkich parametrów
+    let allParameters = {};
+    $('.css-1xbf5wd div').each((_, element) => {
+      const text = $(element).text().trim();
+      const parts = text.split(':');
+      if (parts.length === 2) {
+        const [key, value] = parts;
+        allParameters[key.trim()] = value.trim();
+      }
+    });
+
+    // Tworzenie końcowego obiektu
+    const result = {
+      title: title || 'Brak tytułu',
+      price,
+      area,
+      plotArea,
+      rooms,
+      location: location || 'Brak lokalizacji',
+      description: description || '',
+      sourceUrl: url,
+      source: 'otodom',
+      isActive: true,
+      status,
+      lastChecked: new Date(),
+      details: allParameters
+    };
+
+    console.log('Wynik scrapowania:', result);
+    return result;
+
+  } catch (error) {
+    console.error('Szczegóły błędu scrapera:', {
+      message: error.message,
+      stack: error.stack,
+      response: error.response?.data,
+      status: error.response?.status
+    });
+
+    if (retryCount > 0) {
+      console.log(`Ponawiam próbę (pozostało ${retryCount} prób)...`);
+      await new Promise(resolve => setTimeout(resolve, 2000));
+      return scrapeOtodom(url, retryCount - 1);
+    }
+
+    throw new Error(`Błąd podczas scrapowania: ${error.message}`);
+  }
+}
+      
+    
+
+// Endpoint testowy
+app.get('/', (req, res) => {
+  res.json({ message: 'API działa!' });
+});
+//End default Tablicy
+app.get('/api/boards/default', auth, async (req, res) => {
+  try {
+    const defaultBoard = await Board.findOne({ owner: req.user._id });
+    if (!defaultBoard) {
+      return res.status(404).json({ error: 'Tablica domyślna nie została znaleziona' });
+    }
+    res.json(defaultBoard);
+  } catch (error) {
+    console.error('Błąd przy pobieraniu tablicy domyślnej:', error);
+    res.status(500).json({ error: 'Wystąpił błąd serwera' });
+  }
+});
+//Endpoint do przenoszenia nieruchomości
+app.post('/api/properties/:propertyId/move', auth, async (req, res) => {
+  try {
+    const { targetBoardId } = req.body;
+
+    const property = await Property.findOne({
+      _id: req.params.propertyId,
+      board: { $in: req.user.boards }, // Użytkownik musi być właścicielem nieruchomości
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const targetBoard = await Board.findById(targetBoardId);
+    if (!targetBoard) {
+      return res.status(404).json({ error: 'Docelowa tablica nie została znaleziona' });
+    }
+
+    // Usuwamy nieruchomość ze starej tablicy
+    await Board.updateOne(
+      { _id: property.board },
+      { $pull: { properties: property._id } }
+    );
+
+    // Przenosimy nieruchomość do nowej tablicy
+    property.board = targetBoard._id;
+    await property.save();
+
+    // Dodajemy nieruchomość do nowej tablicy
+    targetBoard.properties.push(property._id);
+    await targetBoard.save();
+
+    res.json({ message: 'Nieruchomość została przeniesiona' });
+  } catch (error) {
+    console.error('Błąd podczas przenoszenia nieruchomości:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas przenoszenia nieruchomości' });
+  }
+});
+//Endpoint do kopiowania nieruchomości
+app.post('/api/properties/:propertyId/copy', auth, async (req, res) => {
+  try {
+    const { targetBoardId } = req.body;
+
+    const property = await Property.findOne({
+      _id: req.params.propertyId,
+      board: { $in: req.user.boards }, // Użytkownik musi być właścicielem nieruchomości
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const targetBoard = await Board.findById(targetBoardId);
+    if (!targetBoard) {
+      return res.status(404).json({ error: 'Docelowa tablica nie została znaleziona' });
+    }
+
+    // Tworzymy nową nieruchomość z tymi samymi danymi
+    const newProperty = new Property({
+      ...property.toObject(),
+      _id: undefined, // MongoDB wygeneruje nowe ID
+      board: targetBoard._id,
+      createdAt: new Date(),
+    });
+    await newProperty.save();
+
+    // Dodajemy nową nieruchomość do docelowej tablicy
+    targetBoard.properties.push(newProperty._id);
+    await targetBoard.save();
+
+    res.json({ message: 'Nieruchomość została skopiowana', property: newProperty });
+  } catch (error) {
+    console.error('Błąd podczas kopiowania nieruchomości:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas kopiowania nieruchomości' });
+  }
+});
+// Endpoint do pobierania tablic
+app.get('/api/boards', auth, async (req, res) => {
+  try {
+    const user = await User.findById(req.user._id)
+      .populate('boards')
+      .populate('sharedBoards');
+    res.json({ boards: user.boards, sharedBoards: user.sharedBoards });
+  } catch (error) {
+    res.status(500).json({ error: 'Błąd podczas pobierania tablic' });
+  }
+});
+
+
+// ===== AUTORYZACJA =====
+// Rejestracja
+app.post('/api/auth/register', async (req, res) => {
+  try {
+    const { email, password, name } = req.body;
+
+    if (!email || !password) {
+      return res.status(400).json({ 
+        error: 'Email i hasło są wymagane',
+        fields: { email: !email, password: !password }
       });
     }
 
-    return filtered;
-  };
+    const existingUser = await User.findOne({ email });
+    if (existingUser) {
+      return res.status(400).json({ error: 'Użytkownik z tym emailem już istnieje' });
+    }
 
-  // ===== RENDER =====
-  if (!isAuthenticated) {
-    return (
-      <div className="min-h-screen bg-gray-50">
-        <div className="max-w-7xl mx-auto py-6 px-4">
-          <div className="text-center mb-8">
-            <h1 className="text-3xl font-bold text-gray-900">
-              HouseApp
-            </h1>
-          </div>
-          {authMode === 'login' ? (
-            <div>
-              <Login onLogin={handleLogin} />
-              <p className="text-center mt-4">
-                Nie masz jeszcze konta?{' '}
-                <button
-                  onClick={() => setAuthMode('register')}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  Zarejestruj się
-                </button>
-              </p>
-            </div>
-          ) : (
-            <div>
-              <Register onRegister={handleRegister} />
-              <p className="text-center mt-4">
-                Masz już konto?{' '}
-                <button
-                  onClick={() => setAuthMode('login')}
-                  className="text-blue-600 hover:text-blue-800"
-                >
-                  Zaloguj się
-                </button>
-              </p>
-            </div>
-          )}
-        </div>
-      </div>
+    const hashedPassword = await bcrypt.hash(password, 10);
+    
+    const user = new User({
+      email,
+      password: hashedPassword,
+      name: name || email.split('@')[0]
+    });
+
+    await user.save();
+
+    const defaultBoard = new Board({
+      name: 'Moja tablica',
+      owner: user._id,
+      isPrivate: true
+    });
+
+    await defaultBoard.save();
+    user.boards.push(defaultBoard._id);
+    await user.save();
+
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
     );
+
+    res.status(201).json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    console.error('Błąd podczas rejestracji:', error);
+    res.status(500).json({ error: error.message });
   }
-return (
-    <div className="min-h-screen bg-gray-50">
-      {/* Top navbar */}
-      <nav className="bg-white border-b border-gray-200">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <Home className="h-8 w-8 text-blue-600" />
-            <span className="text-xl font-bold bg-gradient-to-r from-blue-600 to-blue-400 bg-clip-text text-transparent">
-              HouseApp
-            </span>
-          </div>
+});
 
-          <div className="flex items-center gap-4">
-            <button
-              onClick={handleRefreshAll}
-              disabled={isRefreshing}
-              className="hidden md:flex items-center gap-2 px-4 py-2 text-sm bg-green-600 hover:bg-green-700 text-white rounded-lg transition-colors"
-            >
-              <RefreshCw className="h-4 w-4" />
-              {isRefreshing ? 'Aktualizacja...' : 'Aktualizuj wszystkie'}
-            </button>
+// Logowanie
+app.post('/api/auth/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
 
-            <button
-              onClick={() => setShowInvitations(!showInvitations)}
-              className="flex items-center gap-2 px-4 py-2 text-sm bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200 transition-colors"
-            >
-              <Mail className="h-4 w-4" />
-              <span>Zaproszenia</span>
-            </button>
+    const user = await User.findOne({ email });
+    if (!user) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
 
-            <div className="flex items-center gap-2">
-              <span className="text-gray-600">{user?.name || user?.email}</span>
-              <button
-                onClick={handleLogout}
-                className="text-red-600 hover:text-red-700"
-              >
-                <LogOut className="h-5 w-5" />
-              </button>
-            </div>
-          </div>
-        </div>
-      </nav>
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ error: 'Nieprawidłowy email lub hasło' });
+    }
 
-      <main className="flex-1 py-6">
-        <div className="max-w-7xl mx-auto px-4">
-          {/* Przełącznik między tablicami */}
-          <div className="flex justify-center gap-4 mb-6">
-            <button
-              onClick={() => setBoardViewType('own')}
-              className={`px-4 py-2 rounded-lg ${
-                boardViewType === 'own' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
-              }`}
-            >
-              Moje Tablice
-            </button>
-            <button
-              onClick={() => setBoardViewType('shared')}
-              className={`px-4 py-2 rounded-lg ${
-                boardViewType === 'shared' ? 'bg-blue-600 text-white' : 'bg-gray-200 text-gray-700'
-              }`}
-            >
-              Udostępnione Tablice
-            </button>
-          </div>
+    const token = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_SECRET,
+      { expiresIn: '24h' }
+    );
 
-          {/* Panel zaproszeń */}
-          {showInvitations && (
-            <div className="mb-6">
-              <div className="bg-white rounded-lg shadow">
-                <div className="p-4 border-b border-gray-200">
-                  <h2 className="text-lg font-semibold">Zaproszenia do tablic</h2>
-                </div>
-                <div className="p-4">
-                  <InvitationsView />
-                </div>
-              </div>
-            </div>
-          )}
+    res.json({
+      token,
+      user: {
+        id: user._id,
+        email: user.email,
+        name: user.name
+      }
+    });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          {/* Pasek narzędzi */}
-          <div className="bg-white border-b border-gray-200 p-4 rounded-lg shadow mb-6">
-            <div className="flex flex-col gap-4">
-              <div className="flex items-center gap-4">
-                <div className="relative flex-grow">
-                  <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-5 w-5 text-gray-400" />
-                  <input 
-                    type="text"
-                    placeholder="Szukaj nieruchomości..."
-                    className="w-full pl-10 pr-4 py-2 rounded-lg border border-gray-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none transition-all"
-                  />
-                </div>
-                <button
-                  onClick={() => setIsFormVisible(!isFormVisible)}
-                  className="px-6 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors whitespace-nowrap"
-                >
-                  {isFormVisible ? 'Zamknij' : 'Dodaj nieruchomość'}
-                </button>
-              </div>
+// ===== NIERUCHOMOŚCI =====
+// Pobieranie właściwości
+app.get('/api/properties', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id }
+      ]
+    });
 
-              <div className="flex items-center gap-4 flex-wrap">
-                <button
-                  onClick={() => setIsFiltersVisible(!isFiltersVisible)}
-                  className="flex items-center gap-2 px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                >
-                  <Settings className="h-4 w-4" />
-                  {isFiltersVisible ? 'Ukryj filtry' : 'Pokaż filtry'}
-                </button>
+    const boardIds = boards.map(board => board._id);
+    const properties = await Property.find({ board: { $in: boardIds } })
+      .sort({ createdAt: -1 });
 
-                <button
-                  onClick={() => setIsShareBoardVisible(true)}
-                  className="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                >
-                  Udostępnij Tablicę
-                </button>
+    res.set('Cache-Control', 'no-cache');
+    res.json(properties);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// Zapraszanie użytkownika do tablicy
+app.post('/api/boards/:boardId/invite', auth, async (req, res) => {
+  try {
+    const { email, role } = req.body;
+    const board = await Board.findOne({ _id: req.params.boardId, owner: req.user._id });
 
-                <button
-                  onClick={() => setViewMode(viewMode === 'grid' ? 'map' : 'grid')}
-                  className="flex items-center gap-2 px-4 py-2 text-gray-600 bg-gray-100 rounded-lg hover:bg-gray-200 transition-colors"
-                >
-                  {viewMode === 'grid' ? (
-                    <>
-                      <Map className="h-4 w-4" />
-                      <span>Pokaż mapę</span>
-                    </>
-                  ) : (
-                    <>
-                      <Grid className="h-4 w-4" />
-                      <span>Pokaż listę</span>
-                    </>
-                  )}
-                </button>
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
 
-                <select
-                  onChange={(e) => setSortBy(e.target.value)}
-                  value={sortBy || ''}
-                  className="px-4 py-2 rounded-lg border border-gray-200 bg-white text-gray-600 focus:border-blue-500 focus:ring-1 focus:ring-blue-500 outline-none"
-                >
-                  <option value="">Sortuj według...</option>
-                  <option value="price-asc">Cena: rosnąco</option>
-                  <option value="price-desc">Cena: malejąco</option>
-                  <option value="area-asc">Powierzchnia: rosnąco</option>
-                  <option value="area-desc">Powierzchnia: malejąco</option>
-                  <option value="date-asc">Data: najstarsze</option>
-                  <option value="date-desc">Data: najnowsze</option>
-                </select>
-              </div>
-            </div>
-          </div>
+    const invitedUser = await User.findOne({ email });
+    if (!invitedUser) {
+      return res.status(404).json({ error: 'Nie znaleziono użytkownika o podanym emailu' });
+    }
 
-          {/* Formularz dodawania */}
-          {isFormVisible && (
-            <div className="mb-6">
-              <PropertyForm
-                onSubmit={handleScrape}
-                isLoading={isLoading}
-                url={url}
-                setUrl={setUrl}
-              />
-            </div>
-          )}
+    // Sprawdź czy użytkownik nie jest już zaproszony
+    const existingShare = board.shared.find(share => 
+      share.user.toString() === invitedUser._id.toString()
+    );
 
-          {/* Filtry */}
-          {isFiltersVisible && (
-            <div className="bg-white p-4 rounded-lg shadow mb-6">
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-                <div>
-                  <h3 className="font-medium mb-2">Cena (PLN)</h3>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      placeholder="Od"
-                      value={filters.priceMin}
-                      onChange={(e) => setFilters({...filters, priceMin: e.target.value})}
-                      className="w-full rounded border p-2"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Do"
-                      value={filters.priceMax}
-                      onChange={(e) => setFilters({...filters, priceMax: e.target.value})}
-                      className="w-full rounded border p-2"
-                    />
-                  </div>
-                </div>
-                
-                <div>
-                  <h3 className="font-medium mb-2">Powierzchnia (m²)</h3>
-                  <div className="flex gap-2">
-                    <input
-                      type="number"
-                      placeholder="Od"
-                      value={filters.areaMin}
-                      onChange={(e) => setFilters({...filters, areaMin: e.target.value})}
-                      className="w-full rounded border p-2"
-                    />
-                    <input
-                      type="number"
-                      placeholder="Do"
-                      value={filters.areaMax}
-                      onChange={(e) => setFilters({...filters, areaMax: e.target.value})}
-                      className="w-full rounded border p-2"
-                    />
-                  </div>
-                </div>
+    if (existingShare) {
+      return res.status(400).json({ error: 'Ten użytkownik został już zaproszony' });
+    }
 
-                <div className="space-y-2">
-                  <div>
-                    <h3 className="font-medium mb-2">Stan</h3>
-                    <select
-                      value={filters.status}
-                      onChange={(e) => setFilters({...filters, status: e.target.value})}
-                      className="w-full rounded border p-2"
-                    >
-                      <option value="">Wszystkie</option>
-                      <option value="do zamieszkania">Do zamieszkania</option>
-                      <option value="do remontu">Do remontu</option>
-                      <option value="w budowie">W budowie</option>
-                      <option value="stan deweloperski">Stan deweloperski</option>
-                    </select>
-                  </div>
-                  
-                  <div>
-                    <h3 className="font-medium mb-2">Ocena</h3>
-                    <select
-                      value={filters.rating}
-                      onChange={(e) => setFilters({...filters, rating: e.target.value})}
-                      className="w-full rounded border p-2"
-                    >
-                      <option value="">Wszystkie</option>
-                      <option value="favorite">⭐ Ulubione</option>
-                      <option value="interested">👍 Zainteresowany</option>
-                      <option value="not_interested">👎 Niezainteresowany</option>
-                    </select>
-                  </div>
-                </div>
+    board.shared.push({
+      user: invitedUser._id,
+      role,
+      status: 'pending'
+    });
 
-                <div className="md:col-span-3 flex justify-end mt-4">
-                  <button
-                    onClick={() => setFilters({
-                      priceMin: '',
-                      priceMax: '',
-                      areaMin: '',
-                      areaMax: '',
-                      status: '',
-                      rating: '',
-                    })}
-                    className="px-4 py-2 bg-gray-100 text-gray-600 rounded hover:bg-gray-200"
-                  >
-                    Wyczyść filtry
-                  </button>
-                </div>
-              </div>
-            </div>
-          )}
+    await board.save();
 
-          {/* Modal udostępniania */}
-          {isShareBoardVisible && (
-            <div className="fixed inset-0 flex items-center justify-center bg-gray-800 bg-opacity-50 z-50">
-              <div className="bg-white p-6 rounded-lg shadow-lg max-w-md w-full">
-                <h2 className="text-lg font-bold mb-4">Udostępnij Tablicę</h2>
-                <BoardSharing
-                  boardId={currentBoard?._id}
-                  onClose={() => setIsShareBoardVisible(false)}
-                />
-              </div>
-            </div>
-          )}
+    res.json({ message: 'Zaproszenie zostało wysłane' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-          {/* Lista nieruchomości */}
-          {viewMode === 'map' ? (
-            <MapView 
-              properties={getFilteredAndSortedProperties()} 
-              setExpandedProperty={setExpandedProperty}
-            />
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-              {getFilteredAndSortedProperties().map((property) => (
-                <div 
-                  key={property._id}
-                  className={`bg-white rounded-xl shadow-sm border border-gray-200 transition-all duration-300
-                    ${expandedProperty === property._id ? 'col-span-full' : ''}`}
-                  onClick={() => setExpandedProperty(expandedProperty === property._id ? null : property._id)}
-                >
-                  <div className="p-4">
-                    {/* Nagłówek nieruchomości */}
-                    <div className="flex justify-between items-start mb-3">
-                      <div>
-                        <h3 className="font-semibold text-gray-900">{property.title}</h3>
-                        <p className="text-sm text-gray-500">{property.location || 'Brak lokalizacji'}</p>
-                      </div>
-                      <div className="flex items-center gap-2">
-                        {property.isActive === false ? (
-                          <span className="px-2 py-1 bg-red-100 text-red-800 text-xs font-medium rounded-full">
-                            Nieaktywne
-                          </span>
-                        ) : (
-                          <span className="px-2 py-1 bg-green-100 text-green-800 text-xs font-medium rounded-full">
-                            Aktywne
-                          </span>
-                        )}
-                      </div>
-                    </div>
+// Akceptacja/odrzucenie zaproszenia
+app.put('/api/boards/:boardId/invitation', auth, async (req, res) => {
+  try {
+    const { status } = req.body;
+    const board = await Board.findOne({ 
+      _id: req.params.boardId,
+      'shared.user': req.user._id,
+      'shared.status': 'pending'
+    });
 
-                    {/* Podstawowe informacje */}
-                    <div className="grid grid-cols-2 gap-3 mb-4">
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500 mb-1">Cena</p>
-                        <p className="font-semibold text-gray-900">
-                          {property.price ? `${property.price.toLocaleString()} PLN` : 'Brak danych'}
-                        </p>
-                      </div>
-                      <div className="bg-gray-50 p-3 rounded-lg">
-                        <p className="text-sm text-gray-500 mb-1">Powierzchnia</p>
-                        <p className="font-semibold text-gray-900">
-                          {property.area ? `${property.area} m²` : 'Brak danych'}
-                        </p>
-                      </div>
-                    </div>
+    if (!board) {
+      return res.status(404).json({ error: 'Zaproszenie nie zostało znalezione' });
+    }
 
-                    {/* Przyciski oceny */}
-                    <div className="flex justify-end gap-2 mb-4">
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRating(property._id, 'favorite');
-                        }}
-                        className={`p-2 rounded-lg transition-colors ${
-                          property.rating === 'favorite' 
-                            ? 'bg-yellow-100 text-yellow-600' 
-                            : 'bg-gray-100'
-                        }`}
-                        title="Ulubione"
-                      >
-                          ⭐
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRating(property._id, 'interested');
-                        }}
-                        className={`p-2 rounded-lg transition-colors ${
-                          property.rating === 'interested' 
-                            ? 'bg-green-100 text-green-600' 
-                            : 'bg-gray-100'
-                        }`}
-                        title="Zainteresowany"
-                      >
-                        👍
-                      </button>
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleRating(property._id, 'not_interested');
-                        }}
-                        className={`p-2 rounded-lg transition-colors ${
-                          property.rating === 'not_interested' 
-                            ? 'bg-red-100 text-red-600' 
-                            : 'bg-gray-100'
-                        }`}
-                        title="Niezainteresowany"
-                      >
-                        👎
-                      </button>
-                    </div>
+    const shareIndex = board.shared.findIndex(share => 
+      share.user.toString() === req.user._id.toString()
+    );
 
-                    {/* Przyciski przenoszenia i kopiowania */}
-                    <div className="mt-4">
-                      <label className="block text-sm font-medium text-gray-700 mb-2">
-                        Przenieś do tablicy:
-                      </label>
-                      <select
-                        onClick={(e) => e.stopPropagation()}
-                        onChange={(e) => handleMoveProperty(property._id, e.target.value)}
-                        className="w-full p-2 border rounded-lg mb-2"
-                      >
-                        <option value="">Wybierz tablicę...</option>
-                        {boards.map((board) => (
-                          <option key={board._id} value={board._id}>
-                            {board.name}
-                          </option>
-                        ))}
-                      </select>
+    board.shared[shareIndex].status = status;
+    await board.save();
 
-                      <button
-                        onClick={(e) => {
-                          e.stopPropagation();
-                          handleCopyProperty(property._id, currentBoard?._id);
-                        }}
-                        className="w-full p-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700"
-                      >
-                        Kopiuj do obecnej tablicy
-                      </button>
-                    </div>
+    res.json({ message: 'Status zaproszenia został zaktualizowany' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
 
-                    {/* Rozszerzone informacje */}
-                    {expandedProperty === property._id && (
-                      <div className="mt-4 pt-4 border-t border-gray-200">
-                        <p className="text-gray-700 mb-4">{property.description || 'Brak opisu'}</p>
-                        
-                        {property.sourceUrl && (
-                          <a 
-                            href={property.sourceUrl}
-                            target="_blank"
-                            rel="noopener noreferrer"
-                            className="inline-flex items-center text-blue-600 hover:text-blue-800 hover:underline mb-4"
-                            onClick={(e) => e.stopPropagation()}
-                          >
-                            Zobacz ogłoszenie →
-                          </a>
-                        )}
+// Pobranie listy zaproszeń
+app.get('/api/invitations', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      'shared.user': req.user._id,
+      'shared.status': 'pending'
+    }).populate('owner', 'name email');
 
-                        {/* Przyciski akcji */}
-                        <div className="flex gap-2 justify-end">
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleRefreshProperty(property._id);
-                            }}
-                            className="px-4 py-2 bg-green-100 text-green-600 rounded-lg hover:bg-green-200"
-                            disabled={!property.sourceUrl}
-                          >
-                            Odśwież
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleEditClick(property);
-                            }}
-                            className="px-4 py-2 bg-blue-100 text-blue-600 rounded-lg hover:bg-blue-200"
-                          >
-                            Edytuj
-                          </button>
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              handleDelete(property._id);
-                            }}
-                            className="px-4 py-2 bg-red-100 text-red-600 rounded-lg hover:bg-red-200"
-                          >
-                            Usuń
-                          </button>
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
+    res.json(boards);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+// Endpoint scrapera
+app.post('/api/scrape', auth, async (req, res) => {
+  try {
+    const { url } = req.body;
+    console.log('Otrzymany URL:', url);
+    
+    // Walidacja URL
+    if (!url) {
+      return res.status(400).json({ 
+        error: 'URL jest wymagany',
+        details: 'Nie podano adresu URL do scrapowania'
+      });
+    }
 
-          {/* Formularz edycji */}
-          {editingProperty && (
-            <div ref={editFormRef}>
-              <PropertyEditForm
-                property={editingProperty}
-                onSave={handleSaveEdit}
-                onCancel={() => setEditingProperty(null)}
-              />
-            </div>
-          )}
-        </div>
-      </main>
-    </div>
-  );
+    if (!url.includes('otodom.pl')) {
+      return res.status(400).json({ 
+        error: 'Nieprawidłowy URL',
+        details: 'URL musi być z serwisu Otodom'
+      });
+    }
+
+    try {
+      // Scraping
+      console.log('Rozpoczynam scrapowanie...');
+      const scrapedData = await scrapeOtodom(url);
+      
+      // Geocoding
+      if (scrapedData.location && scrapedData.location !== 'Brak lokalizacji') {
+        console.log('Rozpoczynam geocoding dla lokalizacji:', scrapedData.location);
+        const geoData = await geocodeAddress(scrapedData.location);
+        if (geoData) {
+          console.log('Geocoding udany:', geoData);
+          scrapedData.coordinates = geoData.coordinates;
+          scrapedData.fullAddress = geoData.fullAddress;
+          scrapedData.city = geoData.city;
+          scrapedData.district = geoData.district;
+          scrapedData.region = geoData.region;
+        } else {
+          console.log('Geocoding nie znalazł lokalizacji');
+        }
+      }
+
+      // Zapisywanie danych
+      const defaultBoard = await Board.findOne({ owner: req.user._id });
+      if (!defaultBoard) {
+        return res.status(404).json({ 
+          error: 'Nie znaleziono tablicy',
+          details: 'Nie znaleziono domyślnej tablicy użytkownika'
+        });
+      }
+
+      const property = new Property({
+        ...scrapedData,
+        board: defaultBoard._id,
+        lastChecked: new Date()
+      });
+
+      await property.save();
+      console.log('Nieruchomość zapisana:', property._id);
+
+      defaultBoard.properties.push(property._id);
+      await defaultBoard.save();
+      console.log('Tablica zaktualizowana');
+
+      res.json(property);
+
+    } catch (scrapingError) {
+      console.error('Błąd podczas scrapowania/geocodingu:', scrapingError);
+      
+      if (scrapingError.message.includes('nieaktywna') || 
+          scrapingError.message.includes('archiwalna')) {
+        return res.status(400).json({ 
+          error: 'Ta oferta jest już nieaktywna lub została usunięta. Spróbuj dodać inną ofertę.',
+          details: scrapingError.message
+        });
+      }
+
+      // Lepsze komunikaty dla innych błędów
+      if (scrapingError.message.includes('ECONNABORTED')) {
+        return res.status(408).json({
+          error: 'Przekroczono limit czasu żądania',
+          details: 'Spróbuj ponownie za chwilę'
+        });
+      }
+
+      throw scrapingError;
+    }
+  } catch (error) {
+    console.error('Błąd ogólny:', error);
+    res.status(500).json({
+      error: 'Wystąpił błąd podczas pobierania danych',
+      details: process.env.NODE_ENV === 'development' ? error.message : 'Spróbuj ponownie później'
+    });
+  }
+});
+// Aktualizacja właściwości
+app.put('/api/properties/:id', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    if (req.body.price && req.body.price !== property.price) {
+      if (!property.priceHistory) property.priceHistory = [];
+      property.priceHistory.push({
+        price: property.price,
+        date: new Date()
+      });
+    }
+
+    Object.assign(property, req.body, {
+      updatedAt: new Date(),
+      edited: true
+    });
+
+    await property.save();
+    res.json(property);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Usuwanie właściwości
+app.delete('/api/properties/:id', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    await Board.updateOne(
+      { _id: property.board },
+      { $pull: { properties: property._id } }
+    );
+
+    await Property.deleteOne({ _id: req.params.id });
+    res.json({ message: 'Nieruchomość została usunięta' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Historia cen
+app.get('/api/properties/:id/price-history', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    const priceHistory = [
+      {
+        price: property.price,
+        date: property.createdAt
+      },
+      ...(property.priceHistory || [])
+    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+
+    res.json(priceHistory);
+  } catch (error) {
+    console.error('Błąd podczas pobierania historii cen:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Odświeżanie pojedynczej nieruchomości
+app.post('/api/properties/:id/refresh', auth, async (req, res) => {
+  try {
+    const property = await Property.findOne({
+      _id: req.params.id,
+      board: { $in: req.user.boards }
+    });
+
+    if (!property || !property.sourceUrl) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona lub brak źródłowego URL' });
+    }
+
+    const scrapedData = await scrapeOtodom(property.sourceUrl);
+    
+    if (!scrapedData.price) {
+      property.isActive = false;
+      property.lastChecked = new Date();
+      await property.save();
+      return res.json({ 
+        message: 'Oferta nieaktywna',
+        property 
+      });
+    }
+
+    if (scrapedData.price !== property.price) {
+      if (!property.priceHistory) property.priceHistory = [];
+      property.priceHistory.push({
+        price: property.price,
+        date: new Date()
+      });
+    }
+
+    property.price = scrapedData.price;
+    property.isActive = true;
+    property.lastChecked = new Date();
+    await property.save();
+
+    res.json({ 
+      message: 'Aktualizacja zakończona pomyślnie',
+      property
+    });
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+// Odświeżanie wszystkich nieruchomości
+app.post('/api/properties/refresh-all', auth, async (req, res) => {
+  try {
+    const boards = await Board.find({
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id }
+      ]
+    });
+
+    const boardIds = boards.map(board => board._id);
+    const properties = await Property.find({ 
+      board: { $in: boardIds },
+      sourceUrl: { $exists: true, $ne: '' }
+    });
+
+    const updates = [];
+    const errors = [];
+
+    for (const property of properties) {
+      try {
+        const scrapedData = await scrapeOtodom(property.sourceUrl);
+        
+        if (!scrapedData.price) {
+          property.isActive = false;
+          property.lastChecked = new Date();
+          await property.save();
+          updates.push({ id: property._id, status: 'inactive' });
+          continue;
+        }
+
+        if (scrapedData.price !== property.price) {
+          if (!property.priceHistory) property.priceHistory = [];
+          property.priceHistory.push({
+            price: property.price,
+            date: new Date()
+          });
+        }
+
+        property.price = scrapedData.price;
+        property.isActive = true;
+        property.lastChecked = new Date();
+        await property.save();
+
+        updates.push({ 
+          id: property._id, 
+          status: 'updated',
+          oldPrice: property.price,
+          newPrice: scrapedData.price
+        });
+
+      } catch (error) {
+        console.error(`Błąd podczas aktualizacji ${property._id}:`, error);
+        errors.push({ id: property._id, error: error.message });
+      }
+    }
+
+    res.json({ 
+      success: true, 
+      updated: updates.length,
+      updates,
+      errors
+    });
+
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji wszystkich nieruchomości:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+// Automatyczna aktualizacja co 24h
+if (cron) {
+  cron.schedule('0 3 * * *', async () => {
+    console.log('Rozpoczynam zaplanowaną aktualizację nieruchomości...');
+    try {
+      const properties = await Property.find({
+        sourceUrl: { $exists: true, $ne: '' }
+      });
+
+      for (const property of properties) {
+        try {
+          const scrapedData = await scrapeOtodom(property.sourceUrl);
+          
+          if (!scrapedData.price) {
+            property.isActive = false;
+            property.lastChecked = new Date();
+            await property.save();
+            continue;
+          }
+
+          if (scrapedData.price !== property.price) {
+            if (!property.priceHistory) property.priceHistory = [];
+            property.priceHistory.push({
+              price: property.price,
+              date: new Date()
+            });
+          }
+
+          property.price = scrapedData.price;
+          property.isActive = true;
+          property.lastChecked = new Date();
+          await property.save();
+
+        } catch (error) {
+          console.error(`Błąd podczas aktualizacji ${property._id}:`, error);
+          property.isActive = false;
+          property.lastChecked = new Date();
+          await property.save();
+        }
+      }
+
+      console.log('Zakończono zaplanowaną aktualizację nieruchomości');
+    } catch (error) {
+      console.error('Błąd podczas zaplanowanej aktualizacji:', error);
+    }
+  });
 }
 
-export default App;
-  
+
+// Keepalive dla darmowego planu Render
+setInterval(() => {
+  console.log('Wykonuję ping serwera...');
+  axios.get('https://houseapp-backend.onrender.com/')
+    .then(() => console.log('Ping successful'))
+    .catch(error => console.error('Ping failed:', error));
+}, 14 * 60 * 1000);
+
+// Uruchomienie serwera
+const port = process.env.PORT || 10000;
+app.listen(port, '0.0.0.0', () => {
+  console.log(`Serwer działa na porcie ${port}`);
+});
