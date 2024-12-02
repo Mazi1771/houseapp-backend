@@ -577,6 +577,112 @@ app.post('/api/properties/:propertyId/copy', auth, async (req, res) => {
     res.status(500).json({ error: 'Wystąpił błąd podczas kopiowania nieruchomości' });
   }
 });
+// Pobieranie nieruchomości dla konkretnej tablicy
+app.get('/api/boards/:boardId/properties', auth, async (req, res) => {
+  try {
+    const { boardId } = req.params;
+    
+    // Sprawdź czy użytkownik ma dostęp do tej tablicy
+    const board = await Board.findOne({
+      _id: boardId,
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id, 'shared.status': 'accepted' }
+      ]
+    });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
+
+    const properties = await Property.find({ 
+      board: boardId 
+    }).populate('board', 'owner name')
+      .sort({ createdAt: -1 });
+
+    res.json(properties);
+  } catch (error) {
+    console.error('Błąd podczas pobierania nieruchomości:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas pobierania nieruchomości' });
+  }
+});
+
+// Aktualizacja tablicy
+app.put('/api/boards/:boardId', auth, async (req, res) => {
+  try {
+    const { boardId } = req.params;
+    const { name } = req.body;
+
+    const board = await Board.findOne({
+      _id: boardId,
+      owner: req.user._id
+    });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
+
+    board.name = name;
+    await board.save();
+
+    res.json(board);
+  } catch (error) {
+    console.error('Błąd podczas aktualizacji tablicy:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas aktualizacji tablicy' });
+  }
+});
+
+// Usuwanie tablicy
+app.delete('/api/boards/:boardId', auth, async (req, res) => {
+  try {
+    const { boardId } = req.params;
+
+    const board = await Board.findOne({
+      _id: boardId,
+      owner: req.user._id
+    });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
+
+    // Usuń wszystkie nieruchomości z tej tablicy
+    await Property.deleteMany({ board: boardId });
+
+    // Usuń tablicę
+    await Board.deleteOne({ _id: boardId });
+
+    res.json({ message: 'Tablica została usunięta' });
+  } catch (error) {
+    console.error('Błąd podczas usuwania tablicy:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas usuwania tablicy' });
+  }
+});
+
+// Tworzenie nowej tablicy
+app.post('/api/boards', auth, async (req, res) => {
+  try {
+    const { name } = req.body;
+
+    const board = new Board({
+      name,
+      owner: req.user._id,
+    });
+
+    await board.save();
+
+    // Dodaj tablicę do list tablic użytkownika
+    await User.updateOne(
+      { _id: req.user._id },
+      { $push: { boards: board._id } }
+    );
+
+    res.status(201).json(board);
+  } catch (error) {
+    console.error('Błąd podczas tworzenia tablicy:', error);
+    res.status(500).json({ error: 'Wystąpił błąd podczas tworzenia tablicy' });
+  }
+});
 // Endpoint do pobierania tablic
 app.get('/api/boards', auth, async (req, res) => {
   try {
