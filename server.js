@@ -163,6 +163,10 @@ const UserSchema = new mongoose.Schema({
     type: mongoose.Schema.Types.ObjectId,
     ref: 'Board'
   }],
+  sharedBoards: [{  // Dodajemy to pole
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'Board'
+  }],
   createdAt: { type: Date, default: Date.now }
 });
 
@@ -494,24 +498,18 @@ app.get('/', (req, res) => {
 //End default Tablicy
 app.get('/api/boards', auth, async (req, res) => {
   try {
-    console.log('Pobieranie tablic dla użytkownika:', req.user._id);
-    
-    const user = await User.findById(req.user._id);
-    console.log('Znaleziony użytkownik:', user);
-    
-    if (!user) {
-      return res.status(404).json({ error: 'Nie znaleziono użytkownika' });
-    }
+    // Najpierw pobierz tablice użytkownika
+    const user = await User.findById(req.user._id).populate('boards');
 
-    await user.populate('boards');
-    console.log('Po populate boards:', user.boards);
-    
-    await user.populate('sharedBoards');
-    console.log('Po populate sharedBoards:', user.sharedBoards);
+    // Następnie pobierz tablice udostępnione użytkownikowi
+    const sharedBoards = await Board.find({
+      'shared.user': req.user._id,
+      'shared.status': 'accepted'
+    }).populate('owner', 'name email');
 
     res.json({ 
       boards: user.boards || [], 
-      sharedBoards: user.sharedBoards || [] 
+      sharedBoards: sharedBoards || [] 
     });
   } catch (error) {
     console.error('Szczegóły błędu:', error);
