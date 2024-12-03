@@ -253,20 +253,21 @@ const Property = mongoose.model('Property', PropertySchema);
 const auth = async (req, res, next) => {
   try {
     const authHeader = req.header('Authorization');
-    console.log('Auth header:', authHeader);
+    console.log('Token w middleware auth:', authHeader);
 
     if (!authHeader || !authHeader.startsWith('Bearer ')) {
       throw new Error('Brak tokenu autoryzacji');
     }
 
     const token = authHeader.replace('Bearer ', '');
-    console.log('Token otrzymany:', token ? 'Jest' : 'Brak');
-
+    
     try {
       const decoded = jwt.verify(token, process.env.JWT_SECRET);
-      console.log('Token zdekodowany:', decoded);
+      console.log('Zdekodowany token:', decoded);
 
       const user = await User.findOne({ _id: decoded.userId });
+      console.log('Znaleziony użytkownik w auth:', user ? 'tak' : 'nie');
+
       if (!user) {
         throw new Error('Nie znaleziono użytkownika');
       }
@@ -279,11 +280,8 @@ const auth = async (req, res, next) => {
       throw new Error('Token nieprawidłowy lub wygasł');
     }
   } catch (error) {
-    console.error('Błąd autoryzacji:', error.message);
-    res.status(401).json({ 
-      error: 'Proszę się zalogować', 
-      details: error.message 
-    });
+    console.error('Błąd autoryzacji:', error);
+    res.status(401).json({ error: 'Proszę się zalogować' });
   }
 };
 
@@ -494,16 +492,33 @@ app.get('/', (req, res) => {
   res.json({ message: 'API działa!' });
 });
 //End default Tablicy
-app.get('/api/boards/default', auth, async (req, res) => {
+app.get('/api/boards', auth, async (req, res) => {
   try {
-    const defaultBoard = await Board.findOne({ owner: req.user._id });
-    if (!defaultBoard) {
-      return res.status(404).json({ error: 'Tablica domyślna nie została znaleziona' });
+    console.log('Pobieranie tablic dla użytkownika:', req.user._id);
+    
+    const user = await User.findById(req.user._id);
+    console.log('Znaleziony użytkownik:', user);
+    
+    if (!user) {
+      return res.status(404).json({ error: 'Nie znaleziono użytkownika' });
     }
-    res.json(defaultBoard);
+
+    await user.populate('boards');
+    console.log('Po populate boards:', user.boards);
+    
+    await user.populate('sharedBoards');
+    console.log('Po populate sharedBoards:', user.sharedBoards);
+
+    res.json({ 
+      boards: user.boards || [], 
+      sharedBoards: user.sharedBoards || [] 
+    });
   } catch (error) {
-    console.error('Błąd przy pobieraniu tablicy domyślnej:', error);
-    res.status(500).json({ error: 'Wystąpił błąd serwera' });
+    console.error('Szczegóły błędu:', error);
+    res.status(500).json({ 
+      error: 'Błąd podczas pobierania tablic',
+      details: error.message 
+    });
   }
 });
 //Endpoint do przenoszenia nieruchomości
