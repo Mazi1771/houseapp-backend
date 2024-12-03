@@ -620,8 +620,10 @@ app.get('/api/boards/:boardId/properties', auth, async (req, res) => {
 
     const properties = await Property.find({ 
       board: boardId 
-    }).populate('board', 'owner name')
-      .sort({ createdAt: -1 });
+    })
+    .populate('board', 'owner name')
+    .populate('addedBy', 'name email') // Dodajemy populate dla addedBy
+    .sort({ createdAt: -1 });
 
     res.json(properties);
   } catch (error) {
