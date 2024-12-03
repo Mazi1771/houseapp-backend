@@ -244,6 +244,11 @@ const PropertySchema = new mongoose.Schema({
     ref: 'Board',
     required: true
   },
+  addedBy: {  // Nowe pole
+    type: mongoose.Schema.Types.ObjectId,
+    ref: 'User',
+    required: true
+  },
   edited: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
@@ -492,31 +497,30 @@ async function scrapeOtodom(url, retryCount = 3) {
     
 
 // Endpoint testowy
-app.get('/', (req, res) => {
-  res.json({ message: 'API działa!' });
-});
-//End default Tablicy
 app.get('/api/boards', auth, async (req, res) => {
   try {
-    // Najpierw pobierz tablice użytkownika
-    const user = await User.findById(req.user._id).populate('boards');
+    console.log('Pobieranie tablic dla użytkownika:', req.user._id);
+    
+    // Pobierz własne tablice użytkownika
+    const ownBoards = await Board.find({ owner: req.user._id })
+      .populate('owner', 'name email');
 
-    // Następnie pobierz tablice udostępnione użytkownikowi
+    // Pobierz tablice udostępnione użytkownikowi gdzie status jest "accepted"
     const sharedBoards = await Board.find({
       'shared.user': req.user._id,
       'shared.status': 'accepted'
     }).populate('owner', 'name email');
 
+    console.log('Własne tablice:', ownBoards.length);
+    console.log('Udostępnione tablice:', sharedBoards.length);
+
     res.json({ 
-      boards: user.boards || [], 
-      sharedBoards: sharedBoards || [] 
+      boards: ownBoards, 
+      sharedBoards: sharedBoards 
     });
   } catch (error) {
     console.error('Szczegóły błędu:', error);
-    res.status(500).json({ 
-      error: 'Błąd podczas pobierania tablic',
-      details: error.message 
-    });
+    res.status(500).json({ error: 'Błąd podczas pobierania tablic' });
   }
 });
 //Endpoint do przenoszenia nieruchomości
@@ -724,6 +728,7 @@ app.post('/api/boards/:boardId/properties', auth, async (req, res) => {
     const property = new Property({
       ...req.body,
       board: boardId,
+      addedBy: req.user._id, // Dodajemy informację o tym, kto dodał nieruchomość
       edited: true,
       isActive: true,
       source: 'manual',
