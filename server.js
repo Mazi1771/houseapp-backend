@@ -201,12 +201,15 @@ const BoardSchema = new mongoose.Schema({
 });
 
 const PropertySchema = new mongoose.Schema({
-  title: String,
-  price: { type: Number, default: null, required: false },
-  priceHistory: [PriceHistorySchema],
-  area: { type: Number, default: null, required: false },
-  plotArea: { type: Number, default: null, required: false },
-  rooms: { type: Number, default: null, required: false },
+  title: { type: String, required: true },
+  price: { type: Number, default: null },
+  priceHistory: [{
+    price: { type: Number, required: true },
+    date: { type: Date, default: Date.now }
+  }],
+  area: { type: Number, default: null },
+  plotArea: { type: Number, default: null },
+  rooms: { type: Number, default: null },
   location: { type: String, default: '' },
   description: { type: String, default: '' },
   status: {
@@ -219,14 +222,18 @@ const PropertySchema = new mongoose.Schema({
     enum: ['favorite', 'interested', 'not_interested', null],
     default: null
   },
-  coordinates: {                     // Dodajemy pole coordinates
+  coordinates: {
     lat: { type: Number },
     lng: { type: Number }
   },
   isActive: { type: Boolean, default: true },
   lastChecked: { type: Date, default: Date.now },
   details: { type: Object, default: {} },
-  source: String,
+  source: {
+    type: String,
+    enum: ['otodom', 'manual'],
+    required: true
+  },
   sourceUrl: String,
   board: {
     type: mongoose.Schema.Types.ObjectId,
@@ -237,7 +244,6 @@ const PropertySchema = new mongoose.Schema({
   createdAt: { type: Date, default: Date.now },
   updatedAt: { type: Date, default: Date.now }
 });
-
 // Modele
 const User = mongoose.model('User', UserSchema);
 const Board = mongoose.model('Board', BoardSchema);
