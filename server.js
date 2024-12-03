@@ -684,6 +684,54 @@ app.post('/api/boards', auth, async (req, res) => {
   }
 });
 // Endpoint do pobierania tablic
+app.post('/api/boards/:boardId/properties', auth, async (req, res) => {
+  try {
+    const { boardId } = req.params;
+    
+    // Sprawdź czy tablica istnieje i czy użytkownik ma do niej dostęp
+    const board = await Board.findOne({
+      _id: boardId,
+      $or: [
+        { owner: req.user._id },
+        { 'shared.user': req.user._id, 'shared.status': 'accepted' }
+      ]
+    });
+
+    if (!board) {
+      return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+    }
+
+    // Utwórz nową nieruchomość
+    const property = new Property({
+      ...req.body,
+      board: boardId,
+      edited: true,
+      isActive: true,
+      source: 'manual',
+      lastChecked: new Date(),
+      coordinates: req.body.coordinates || null,
+      priceHistory: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    });
+
+    // Zapisz nieruchomość
+    await property.save();
+
+    // Dodaj nieruchomość do tablicy
+    board.properties.push(property._id);
+    await board.save();
+
+    // Zwróć utworzoną nieruchomość
+    res.status(201).json(property);
+  } catch (error) {
+    console.error('Błąd podczas dodawania nieruchomości:', error);
+    res.status(500).json({ 
+      error: 'Wystąpił błąd podczas dodawania nieruchomości',
+      details: error.message 
+    });
+  }
+});
 app.get('/api/boards', auth, async (req, res) => {
   try {
     const user = await User.findById(req.user._id)
