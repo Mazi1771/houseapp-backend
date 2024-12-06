@@ -246,10 +246,11 @@ const PropertySchema = new mongoose.Schema({
     ref: 'Board',
     required: true
   },
-  addedBy: {  // Nowe pole
+  addedBy: {
     type: mongoose.Schema.Types.ObjectId,
     ref: 'User',
-    required: true
+    required: true,
+    immutable: true 
   },
   edited: { type: Boolean, default: false },
   createdAt: { type: Date, default: Date.now },
@@ -1061,32 +1062,43 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
   try {
-    const property = await Property.findOne({
-      _id: req.params.id,
-      board: { $in: req.user.boards }
-    });
+    console.log('Otrzymane dane:', req.body);
+    console.log('ID property:', req.params.id);
+
+    // Najpierw pobierz istniejącą nieruchomość
+    const existingProperty = await Property.findById(req.params.id);
+    if (!existingProperty) {
+      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+    }
+
+    // Zachowaj addedBy z istniejącej nieruchomości
+    const updatedData = {
+      ...req.body,
+      addedBy: existingProperty.addedBy,
+      updatedAt: new Date()
+    };
+
+    console.log('Dane do aktualizacji:', updatedData);
+
+    const property = await Property.findByIdAndUpdate(
+      req.params.id,
+      updatedData,
+      { 
+        new: true,          // zwraca zaktualizowany dokument
+        runValidators: true // uruchamia walidatory schematu
+      }
+    );
 
     if (!property) {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
-    if (req.body.price && req.body.price !== property.price) {
-      if (!property.priceHistory) property.priceHistory = [];
-      property.priceHistory.push({
-        price: property.price,
-        date: new Date()
-      });
-    }
-
-    Object.assign(property, req.body, {
-      updatedAt: new Date(),
-      edited: true
-    });
-
-    await property.save();
     res.json(property);
   } catch (error) {
-    res.status(500).json({ error: error.message });
+    console.error('Błąd aktualizacji:', error);
+    res.status(500).json({ 
+      error: error.message || 'Wystąpił błąd podczas aktualizacji nieruchomości'
+    });
   }
 });
 
