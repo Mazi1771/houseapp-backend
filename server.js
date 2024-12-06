@@ -1129,27 +1129,24 @@ app.delete('/api/properties/:id', auth, async (req, res) => {
 // Historia cen
 app.get('/api/properties/:id/price-history', auth, async (req, res) => {
   try {
-    const property = await Property.findOne({
-      _id: req.params.id,
-      board: { $in: req.user.boards }
-    });
-
+    const property = await Property.findById(req.params.id);
     if (!property) {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
-    const priceHistory = [
+    // Stwórz pełną historię cen, zaczynając od ceny początkowej
+    const history = [
       {
         price: property.price,
-        date: property.createdAt
+        date: new Date()
       },
       ...(property.priceHistory || [])
-    ].sort((a, b) => new Date(b.date) - new Date(a.date));
+    ];
 
-    res.json(priceHistory);
+    res.json(history);
   } catch (error) {
     console.error('Błąd podczas pobierania historii cen:', error);
-    res.status(500).json({ error: error.message });
+    res.status(500).json({ error: 'Wystąpił błąd podczas pobierania historii cen' });
   }
 });
 
