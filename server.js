@@ -14,6 +14,8 @@ const app = express();
 
 // Lista dozwolonych origin'ów
 const allowedOrigins = [
+  'https://www.home-hub.com.pl/',
+  'https://www.home-hub.pl/',
   'https://houseapp-uhmg.vercel.app',
   'https://houseapp-uhmg-git-main-barteks-projects.vercel.app',
   'http://localhost:3000'
