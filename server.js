@@ -1136,26 +1136,42 @@ app.put('/api/properties/:id', auth, async (req, res) => {
 
 // Usuwanie właściwości
 app.delete('/api/properties/:id', auth, async (req, res) => {
-  try {
-    const property = await Property.findOne({
-      _id: req.params.id,
-      board: { $in: req.user.boards }
-    });
+    try {
+        // Znajdź nieruchomość
+        const property = await Property.findById(req.params.id);
+        
+        if (!property) {
+            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+        }
 
-    if (!property) {
-      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+        // Sprawdź czy użytkownik ma prawo usunąć nieruchomość
+        const board = await Board.findById(property.board);
+        
+        if (!board) {
+            return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+        }
+
+        // Tylko właściciel tablicy może usuwać nieruchomości
+        if (board.owner.toString() !== req.user._id.toString()) {
+            return res.status(403).json({ error: 'Brak uprawnień do usunięcia tej nieruchomości' });
+        }
+
+        // Usuń nieruchomość
+        await Property.findByIdAndDelete(req.params.id);
+
+        // Usuń referencję do nieruchomości z tablicy
+        await Board.updateOne(
+            { _id: property.board },
+            { $pull: { properties: property._id } }
+        );
+
+        res.json({ message: 'Nieruchomość została usunięta' });
+    } catch (error) {
+        console.error('Błąd podczas usuwania:', error);
+        res.status(500).json({ 
+            error: error.message || 'Wystąpił błąd podczas usuwania nieruchomości' 
+        });
     }
-
-    await Board.updateOne(
-      { _id: property.board },
-      { $pull: { properties: property._id } }
-    );
-
-    await Property.deleteOne({ _id: req.params.id });
-    res.json({ message: 'Nieruchomość została usunięta' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
 });
 
 // Historia cen
