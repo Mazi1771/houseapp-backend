@@ -1066,20 +1066,38 @@ app.put('/api/properties/:id', auth, async (req, res) => {
     console.log('ID property:', req.params.id);
 
     // Najpierw pobierz istniejącą nieruchomość
-    const existingProperty = await Property.findById(req.params.id);
+    const existingProperty = await Property.findById(req.params.id)
+      .populate('addedBy', 'name email');
+    
     if (!existingProperty) {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
-    // Zachowaj addedBy z istniejącej nieruchomości
+    // Sprawdź czy zmienia się cena
+    if (req.body.price && req.body.price !== existingProperty.price) {
+      // Dodaj aktualną cenę do historii
+      if (!existingProperty.priceHistory) {
+        existingProperty.priceHistory = [];
+      }
+      existingProperty.priceHistory.unshift({
+        price: existingProperty.price,
+        date: new Date()
+      });
+    }
+
+    // Przygotuj dane do aktualizacji
     const updatedData = {
       ...req.body,
-      addedBy: existingProperty.addedBy,
-      updatedAt: new Date()
+      addedBy: existingProperty.addedBy._id, // Zachowaj ID oryginalnego właściciela
+      updatedAt: new Date(),
+      priceHistory: req.body.price !== existingProperty.price 
+        ? existingProperty.priceHistory 
+        : existingProperty.priceHistory || []
     };
 
     console.log('Dane do aktualizacji:', updatedData);
 
+    // Aktualizuj nieruchomość
     const property = await Property.findByIdAndUpdate(
       req.params.id,
       updatedData,
@@ -1087,13 +1105,15 @@ app.put('/api/properties/:id', auth, async (req, res) => {
         new: true,          // zwraca zaktualizowany dokument
         runValidators: true // uruchamia walidatory schematu
       }
-    );
+    ).populate('addedBy', 'name email'); // Dołącz dane użytkownika
 
     if (!property) {
       return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
     }
 
+    // Zwróć zaktualizowaną nieruchomość
     res.json(property);
+
   } catch (error) {
     console.error('Błąd aktualizacji:', error);
     res.status(500).json({ 
