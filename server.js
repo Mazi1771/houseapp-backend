@@ -296,7 +296,16 @@ const auth = async (req, res, next) => {
     res.status(401).json({ error: 'Proszę się zalogować' });
   }
 };
-
+// Middleware do logowania requestów
+app.use((req, res, next) => {
+  console.log(`${req.method} ${req.path}`, {
+    body: req.body,
+    query: req.query,
+    params: req.params,
+    user: req.user?._id
+  });
+  next();
+});
 // Funkcja scrapowania
 
 
