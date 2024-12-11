@@ -1070,59 +1070,44 @@ app.post('/api/scrape', auth, async (req, res) => {
 });
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
+    const id = req.params.id;
     try {
-        const propertyId = req.params.id;
-        console.log('\nRozpoczynam aktualizację nieruchomości:', propertyId);
-        console.log('Otrzymane dane:', req.body);
+        console.log('\nAktualizacja nieruchomości, ID:', id);
+        console.log('Dane do aktualizacji:', req.body);
 
-        // Znajdź nieruchomość przed aktualizacją
-        const existingProperty = await Property.findById(propertyId);
+        // Sprawdź czy istnieje
+        const existingProperty = await Property.findById(id);
         if (!existingProperty) {
-            console.log('Nie znaleziono nieruchomości o ID:', propertyId);
+            console.log('Nie znaleziono nieruchomości:', id);
             return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
         }
 
-        console.log('Znaleziona nieruchomość przed aktualizacją:', existingProperty);
+        // Aktualizuj właściwości
+        existingProperty.title = req.body.title;
+        existingProperty.price = req.body.price;
+        existingProperty.area = req.body.area;
+        existingProperty.location = req.body.location;
+        existingProperty.description = req.body.description;
+        existingProperty.status = req.body.status;
+        existingProperty.rooms = req.body.rooms;
+        existingProperty.edited = true;
+        existingProperty.updatedAt = new Date();
 
-        // Przygotuj dane do aktualizacji
-        const updateData = {
-            title: req.body.title,
-            price: Number(req.body.price),
-            area: Number(req.body.area),
-            location: req.body.location,
-            description: req.body.description,
-            status: req.body.status,
-            rooms: req.body.rooms !== undefined ? Number(req.body.rooms) : null,
-            edited: true,
-            updatedAt: new Date()
-        };
+        // Zapisz zmiany
+        const savedProperty = await existingProperty.save();
+        
+        // Pobierz zaktualizowaną nieruchomość z relacjami
+        const updatedProperty = await Property.findById(id)
+            .populate('addedBy', 'name email');
 
-        console.log('Dane do aktualizacji:', updateData);
-
-        // Wykonaj aktualizację
-        const updatedProperty = await Property.findByIdAndUpdate(
-            propertyId,
-            updateData,
-            { 
-                new: true,
-                runValidators: true 
-            }
-        ).populate('addedBy', 'name email');
-
-        if (!updatedProperty) {
-            console.log('Błąd podczas aktualizacji - nie znaleziono dokumentu');
-            return res.status(404).json({ error: 'Nie można zaktualizować nieruchomości' });
-        }
-
-        console.log('Pomyślnie zaktualizowano nieruchomość:', updatedProperty);
+        console.log('Zaktualizowana nieruchomość:', updatedProperty);
         res.json(updatedProperty);
 
     } catch (error) {
         console.error('Błąd podczas aktualizacji:', error);
-        res.status(500).json({
-            error: 'Wystąpił błąd podczas aktualizacji nieruchomości',
-            details: error.message,
-            stack: error.stack
+        res.status(500).json({ 
+            error: 'Błąd podczas aktualizacji nieruchomości',
+            details: error.message 
         });
     }
 });
