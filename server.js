@@ -207,54 +207,51 @@ const BoardSchema = new mongoose.Schema({
 });
 
 const PropertySchema = new mongoose.Schema({
-  title: { type: String, required: true, trim: true },
-  price: { type: Number, default: null },
-  priceHistory: [{
-    price: { type: Number, required: true },
-    date: { type: Date, default: Date.now }
-  }],
-  area: { type: Number, default: null },
-  plotArea: { type: Number, default: null },
-  rooms: { type: Number, default: null },
-  location: { type: String, default: '' },
-  description: { type: String, default: '' },
-  status: {
-    type: String,
-    enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
-    default: 'wybierz'
-  },
-  rating: {
-    type: String,
-    enum: ['favorite', 'interested', 'not_interested', null],
-    default: null
-  },
-  coordinates: {
-    lat: { type: Number },
-    lng: { type: Number }
-  },
-  isActive: { type: Boolean, default: true },
-  lastChecked: { type: Date, default: Date.now },
-  details: { type: Object, default: {} },
-  source: {
-    type: String,
-    enum: ['otodom', 'manual'],
-    required: true
-  },
-  sourceUrl: String,
-  board: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'Board',
-    required: true
-  },
-  addedBy: {
-    type: mongoose.Schema.Types.ObjectId,
-    ref: 'User',
-    required: true,
-    immutable: true 
-  },
-  edited: { type: Boolean, default: false },
-  createdAt: { type: Date, default: Date.now },
-  updatedAt: { type: Date, default: Date.now }
+    title: { 
+        type: String, 
+        required: true 
+    },
+    price: { 
+        type: Number, 
+        required: true 
+    },
+    area: { 
+        type: Number 
+    },
+    location: { 
+        type: String 
+    },
+    description: { 
+        type: String, 
+        default: '' 
+    },
+    status: { 
+        type: String, 
+        enum: ['wybierz', 'do zamieszkania', 'do remontu', 'w budowie', 'stan deweloperski'],
+        default: 'wybierz'
+    },
+    rooms: { 
+        type: Number, 
+        default: null 
+    },
+    edited: { 
+        type: Boolean, 
+        default: false 
+    },
+    updatedAt: { 
+        type: Date, 
+        default: Date.now 
+    },
+    board: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Board',
+        required: true
+    },
+    addedBy: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'User',
+        required: true
+    }
 });
 // Modele
 const User = mongoose.model('User', UserSchema);
@@ -1074,45 +1071,58 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
     try {
+        const propertyId = req.params.id;
+        console.log('\nRozpoczynam aktualizację nieruchomości:', propertyId);
         console.log('Otrzymane dane:', req.body);
 
-        // Przygotuj dane do aktualizacji, usuwając puste wartości
-        const updates = {};
-        if (req.body.title !== undefined) updates.title = req.body.title;
-        if (req.body.price !== undefined) updates.price = parseInt(req.body.price);
-        if (req.body.area !== undefined) updates.area = parseFloat(req.body.area);
-        if (req.body.location !== undefined) updates.location = req.body.location;
-        if (req.body.description !== undefined) updates.description = req.body.description;
-        if (req.body.status !== undefined) updates.status = req.body.status;
-        if (req.body.rooms !== undefined) updates.rooms = parseInt(req.body.rooms);
+        // Znajdź nieruchomość przed aktualizacją
+        const existingProperty = await Property.findById(propertyId);
+        if (!existingProperty) {
+            console.log('Nie znaleziono nieruchomości o ID:', propertyId);
+            return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
+        }
 
-        updates.edited = true;
-        updates.updatedAt = new Date();
+        console.log('Znaleziona nieruchomość przed aktualizacją:', existingProperty);
 
-        console.log('Przygotowane aktualizacje:', updates);
+        // Przygotuj dane do aktualizacji
+        const updateData = {
+            title: req.body.title,
+            price: Number(req.body.price),
+            area: Number(req.body.area),
+            location: req.body.location,
+            description: req.body.description,
+            status: req.body.status,
+            rooms: req.body.rooms !== undefined ? Number(req.body.rooms) : null,
+            edited: true,
+            updatedAt: new Date()
+        };
 
-        // Znajdź i zaktualizuj nieruchomość
+        console.log('Dane do aktualizacji:', updateData);
+
+        // Wykonaj aktualizację
         const updatedProperty = await Property.findByIdAndUpdate(
-            req.params.id,
-            { $set: updates },
+            propertyId,
+            updateData,
             { 
-                new: true, // zwróć zaktualizowany dokument
-                runValidators: true // uruchom walidację schematu
+                new: true,
+                runValidators: true 
             }
         ).populate('addedBy', 'name email');
 
         if (!updatedProperty) {
-            return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
+            console.log('Błąd podczas aktualizacji - nie znaleziono dokumentu');
+            return res.status(404).json({ error: 'Nie można zaktualizować nieruchomości' });
         }
 
-        console.log('Zaktualizowana nieruchomość:', updatedProperty);
+        console.log('Pomyślnie zaktualizowano nieruchomość:', updatedProperty);
         res.json(updatedProperty);
 
     } catch (error) {
-        console.error('Błąd aktualizacji:', error);
+        console.error('Błąd podczas aktualizacji:', error);
         res.status(500).json({
-            error: 'Błąd podczas aktualizacji nieruchomości',
-            details: error.message
+            error: 'Wystąpił błąd podczas aktualizacji nieruchomości',
+            details: error.message,
+            stack: error.stack
         });
     }
 });
