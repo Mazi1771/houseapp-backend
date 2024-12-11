@@ -207,7 +207,7 @@ const BoardSchema = new mongoose.Schema({
 });
 
 const PropertySchema = new mongoose.Schema({
-  title: { type: String, required: true },
+  title: { type: String, required: true, trim: true },
   price: { type: Number, default: null },
   priceHistory: [{
     price: { type: Number, required: true },
@@ -1074,26 +1074,30 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
     try {
-        const updates = {
-            title: req.body.title,
-            price: parseInt(req.body.price),
-            area: parseFloat(req.body.area),
-            location: req.body.location,
-            description: req.body.description,
-            status: req.body.status,
-            rooms: req.body.rooms !== undefined ? parseInt(req.body.rooms) : null,
-            edited: true,
-            updatedAt: new Date()
-        };
+        console.log('Otrzymane dane:', req.body);
 
-        console.log('Otrzymane aktualizacje:', updates);
+        // Przygotuj dane do aktualizacji, usuwając puste wartości
+        const updates = {};
+        if (req.body.title !== undefined) updates.title = req.body.title;
+        if (req.body.price !== undefined) updates.price = parseInt(req.body.price);
+        if (req.body.area !== undefined) updates.area = parseFloat(req.body.area);
+        if (req.body.location !== undefined) updates.location = req.body.location;
+        if (req.body.description !== undefined) updates.description = req.body.description;
+        if (req.body.status !== undefined) updates.status = req.body.status;
+        if (req.body.rooms !== undefined) updates.rooms = parseInt(req.body.rooms);
 
+        updates.edited = true;
+        updates.updatedAt = new Date();
+
+        console.log('Przygotowane aktualizacje:', updates);
+
+        // Znajdź i zaktualizuj nieruchomość
         const updatedProperty = await Property.findByIdAndUpdate(
             req.params.id,
             { $set: updates },
             { 
-                new: true,
-                runValidators: true
+                new: true, // zwróć zaktualizowany dokument
+                runValidators: true // uruchom walidację schematu
             }
         ).populate('addedBy', 'name email');
 
@@ -1106,8 +1110,8 @@ app.put('/api/properties/:id', auth, async (req, res) => {
 
     } catch (error) {
         console.error('Błąd aktualizacji:', error);
-        res.status(500).json({ 
-            error: 'Wystąpił błąd podczas aktualizacji nieruchomości',
+        res.status(500).json({
+            error: 'Błąd podczas aktualizacji nieruchomości',
             details: error.message
         });
     }
