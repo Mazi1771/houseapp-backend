@@ -931,6 +931,34 @@ app.post('/api/boards/:boardId/invite', auth, async (req, res) => {
 });
 
 // Akceptacja/odrzucenie zaproszenia
+app.put('/api/properties/:id', auth, async (req, res) => {
+    try {
+        // Znajdź i sprawdź nieruchomość
+        const property = await Property.findById(req.params.id)
+            .populate('addedBy', 'name email');
+
+        if (!property) {
+            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+        }
+
+        // Aktualizuj tylko wybrane pola
+        if (req.body.rating) {
+            property.rating = req.body.rating;
+        }
+        
+        // Zapisz zmiany
+        await property.save();
+
+        // Pobierz zaktualizowaną nieruchomość z populated addedBy
+        const updatedProperty = await Property.findById(property._id)
+            .populate('addedBy', 'name email');
+
+        res.json(updatedProperty);
+    } catch (error) {
+        console.error('Błąd aktualizacji:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
 
 // Pobranie listy zaproszeń
 app.get('/api/invitations', auth, async (req, res) => {
