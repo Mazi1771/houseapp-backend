@@ -1073,65 +1073,61 @@ app.post('/api/scrape', auth, async (req, res) => {
 });
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
-  try {
-    console.log('Otrzymane dane:', req.body);
-    console.log('ID property:', req.params.id);
+    try {
+        console.log('Otrzymane dane do aktualizacji:', req.body);
 
-    // Najpierw pobierz istniejącą nieruchomość
-    const existingProperty = await Property.findById(req.params.id)
-      .populate('addedBy', 'name email');
-    
-    if (!existingProperty) {
-      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+        // Najpierw sprawdź czy nieruchomość istnieje
+        const property = await Property.findById(req.params.id)
+            .populate('addedBy', 'name email');
+
+        if (!property) {
+            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
+        }
+
+        // Sprawdź czy użytkownik ma prawo edytować tę nieruchomość
+        const board = await Board.findById(property.board);
+        if (!board) {
+            return res.status(404).json({ error: 'Tablica nie została znaleziona' });
+        }
+
+        // Przygotuj dane do aktualizacji
+        const updates = {
+            title: req.body.title,
+            price: req.body.price,
+            area: req.body.area,
+            plotArea: req.body.plotArea,
+            rooms: req.body.rooms,
+            location: req.body.location,
+            description: req.body.description,
+            status: req.body.status,
+            edited: true,
+            updatedAt: new Date()
+        };
+
+        // Użyj findByIdAndUpdate z opcją new: true aby otrzymać zaktualizowany dokument
+        const updatedProperty = await Property.findByIdAndUpdate(
+            req.params.id,
+            { $set: updates },
+            { 
+                new: true, // zwraca zaktualizowany dokument
+                runValidators: true // uruchamia walidatory schematu
+            }
+        ).populate('addedBy', 'name email');
+
+        if (!updatedProperty) {
+            return res.status(404).json({ error: 'Nie można zaktualizować nieruchomości' });
+        }
+
+        console.log('Zaktualizowana nieruchomość:', updatedProperty);
+        res.json(updatedProperty);
+
+    } catch (error) {
+        console.error('Błąd aktualizacji:', error);
+        res.status(500).json({ 
+            error: 'Wystąpił błąd podczas aktualizacji nieruchomości',
+            details: error.message 
+        });
     }
-
-    // Sprawdź czy zmienia się cena
-    if (req.body.price && req.body.price !== existingProperty.price) {
-      // Dodaj aktualną cenę do historii
-      if (!existingProperty.priceHistory) {
-        existingProperty.priceHistory = [];
-      }
-      existingProperty.priceHistory.unshift({
-        price: existingProperty.price,
-        date: new Date()
-      });
-    }
-
-    // Przygotuj dane do aktualizacji
-    const updatedData = {
-      ...req.body,
-      addedBy: existingProperty.addedBy._id, // Zachowaj ID oryginalnego właściciela
-      updatedAt: new Date(),
-      priceHistory: req.body.price !== existingProperty.price 
-        ? existingProperty.priceHistory 
-        : existingProperty.priceHistory || []
-    };
-
-    console.log('Dane do aktualizacji:', updatedData);
-
-    // Aktualizuj nieruchomość
-    const property = await Property.findByIdAndUpdate(
-      req.params.id,
-      updatedData,
-      { 
-        new: true,          // zwraca zaktualizowany dokument
-        runValidators: true // uruchamia walidatory schematu
-      }
-    ).populate('addedBy', 'name email'); // Dołącz dane użytkownika
-
-    if (!property) {
-      return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
-    }
-
-    // Zwróć zaktualizowaną nieruchomość
-    res.json(property);
-
-  } catch (error) {
-    console.error('Błąd aktualizacji:', error);
-    res.status(500).json({ 
-      error: error.message || 'Wystąpił błąd podczas aktualizacji nieruchomości'
-    });
-  }
 });
 
 // Usuwanie właściwości
