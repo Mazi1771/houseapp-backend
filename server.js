@@ -931,34 +931,6 @@ app.post('/api/boards/:boardId/invite', auth, async (req, res) => {
 });
 
 // Akceptacja/odrzucenie zaproszenia
-app.put('/api/properties/:id', auth, async (req, res) => {
-    try {
-        // Znajdź i sprawdź nieruchomość
-        const property = await Property.findById(req.params.id)
-            .populate('addedBy', 'name email');
-
-        if (!property) {
-            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
-        }
-
-        // Aktualizuj tylko wybrane pola
-        if (req.body.rating) {
-            property.rating = req.body.rating;
-        }
-        
-        // Zapisz zmiany
-        await property.save();
-
-        // Pobierz zaktualizowaną nieruchomość z populated addedBy
-        const updatedProperty = await Property.findById(property._id)
-            .populate('addedBy', 'name email');
-
-        res.json(updatedProperty);
-    } catch (error) {
-        console.error('Błąd aktualizacji:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
 
 // Pobranie listy zaproszeń
 app.get('/api/invitations', auth, async (req, res) => {
@@ -1071,50 +1043,48 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
     try {
-        const propertyId = req.url.split('/').pop(); // Pobierz ID z URL
-        console.log('\nAktualizacja nieruchomości, ID:', propertyId);
-        console.log('Dane wejściowe:', req.body);
+        console.log('Aktualizacja nieruchomości:', req.params.id);
+        console.log('Dane do aktualizacji:', req.body);
 
-        // Znajdź i zaktualizuj nieruchomość
-        const property = await Property.findById(propertyId);
+        // Znajdujemy nieruchomość
+        const property = await Property.findById(req.params.id)
+            .populate('addedBy', 'name email');
+
         if (!property) {
-            console.log('Nie znaleziono nieruchomości z ID:', propertyId);
-            return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
+            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
         }
 
-        console.log('Znaleziona nieruchomość:', property);
+        // Osobna obsługa aktualizacji oceny
+        if (req.body.rating !== undefined) {
+            property.rating = req.body.rating;
+        } else {
+            // Pełna aktualizacja danych nieruchomości
+            property.title = req.body.title;
+            property.price = Number(req.body.price);
+            property.area = Number(req.body.area);
+            property.location = req.body.location;
+            property.description = req.body.description;
+            property.status = req.body.status;
+            property.rooms = req.body.rooms !== undefined ? Number(req.body.rooms) : null;
+            property.edited = true;
+            property.updatedAt = new Date();
+        }
 
-        // Aktualizacja pól
-        property.set({
-            title: req.body.title,
-            price: Number(req.body.price),
-            area: Number(req.body.area),
-            location: req.body.location,
-            description: req.body.description,
-            status: req.body.status,
-            rooms: req.body.rooms !== undefined ? Number(req.body.rooms) : null,
-            edited: true,
-            updatedAt: new Date()
-        });
-
-        console.log('Przygotowane zmiany:', property);
-
-        // Zapisz zmiany
+        // Zapisujemy zmiany
         await property.save();
 
-        // Pobierz świeżo zaktualizowaną nieruchomość
-        const updatedProperty = await Property.findById(propertyId)
+        // Pobieramy świeżo zaktualizowaną nieruchomość ze wszystkimi powiązaniami
+        const updatedProperty = await Property.findById(req.params.id)
             .populate('addedBy', 'name email');
 
         console.log('Zaktualizowana nieruchomość:', updatedProperty);
-
         res.json(updatedProperty);
+
     } catch (error) {
-        console.error('Błąd podczas aktualizacji:', error);
+        console.error('Błąd aktualizacji:', error);
         res.status(500).json({
             error: 'Wystąpił błąd podczas aktualizacji',
-            details: error.message,
-            stack: error.stack
+            details: error.message
         });
     }
 });
