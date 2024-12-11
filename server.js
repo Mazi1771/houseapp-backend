@@ -933,7 +933,10 @@ app.post('/api/boards/:boardId/invite', auth, async (req, res) => {
 // Akceptacja/odrzucenie zaproszenia
 app.put('/api/properties/:id', auth, async (req, res) => {
     try {
-        // Znajdź i sprawdź nieruchomość
+        console.log('Aktualizacja nieruchomości:', req.params.id);
+        console.log('Dane do aktualizacji:', req.body);
+
+        // Znajdujemy nieruchomość
         const property = await Property.findById(req.params.id)
             .populate('addedBy', 'name email');
 
@@ -941,22 +944,38 @@ app.put('/api/properties/:id', auth, async (req, res) => {
             return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
         }
 
-        // Aktualizuj tylko wybrane pola
-        if (req.body.rating) {
+        // Osobna obsługa aktualizacji oceny
+        if (req.body.rating !== undefined) {
             property.rating = req.body.rating;
+        } else {
+            // Pełna aktualizacja danych nieruchomości
+            property.title = req.body.title;
+            property.price = Number(req.body.price);
+            property.area = Number(req.body.area);
+            property.location = req.body.location;
+            property.description = req.body.description;
+            property.status = req.body.status;
+            property.rooms = req.body.rooms !== undefined ? Number(req.body.rooms) : null;
+            property.edited = true;
+            property.updatedAt = new Date();
         }
-        
-        // Zapisz zmiany
+
+        // Zapisujemy zmiany
         await property.save();
 
-        // Pobierz zaktualizowaną nieruchomość z populated addedBy
-        const updatedProperty = await Property.findById(property._id)
+        // Pobieramy świeżo zaktualizowaną nieruchomość ze wszystkimi powiązaniami
+        const updatedProperty = await Property.findById(req.params.id)
             .populate('addedBy', 'name email');
 
+        console.log('Zaktualizowana nieruchomość:', updatedProperty);
         res.json(updatedProperty);
+
     } catch (error) {
         console.error('Błąd aktualizacji:', error);
-        res.status(500).json({ error: error.message });
+        res.status(500).json({
+            error: 'Wystąpił błąd podczas aktualizacji',
+            details: error.message
+        });
     }
 });
 
@@ -1069,53 +1088,7 @@ app.post('/api/scrape', auth, async (req, res) => {
   }
 });
 // Aktualizacja właściwości
-app.put('/api/properties/:id', auth, async (req, res) => {
-    try {
-        console.log('Aktualizacja nieruchomości:', req.params.id);
-        console.log('Dane do aktualizacji:', req.body);
 
-        // Znajdujemy nieruchomość
-        const property = await Property.findById(req.params.id)
-            .populate('addedBy', 'name email');
-
-        if (!property) {
-            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
-        }
-
-        // Osobna obsługa aktualizacji oceny
-        if (req.body.rating !== undefined) {
-            property.rating = req.body.rating;
-        } else {
-            // Pełna aktualizacja danych nieruchomości
-            property.title = req.body.title;
-            property.price = Number(req.body.price);
-            property.area = Number(req.body.area);
-            property.location = req.body.location;
-            property.description = req.body.description;
-            property.status = req.body.status;
-            property.rooms = req.body.rooms !== undefined ? Number(req.body.rooms) : null;
-            property.edited = true;
-            property.updatedAt = new Date();
-        }
-
-        // Zapisujemy zmiany
-        await property.save();
-
-        // Pobieramy świeżo zaktualizowaną nieruchomość ze wszystkimi powiązaniami
-        const updatedProperty = await Property.findById(req.params.id)
-            .populate('addedBy', 'name email');
-
-        console.log('Zaktualizowana nieruchomość:', updatedProperty);
-        res.json(updatedProperty);
-
-    } catch (error) {
-        console.error('Błąd aktualizacji:', error);
-        res.status(500).json({
-            error: 'Wystąpił błąd podczas aktualizacji',
-            details: error.message
-        });
-    }
-});
 // Usuwanie właściwości
 app.delete('/api/properties/:id', auth, async (req, res) => {
     try {
