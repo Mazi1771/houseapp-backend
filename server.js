@@ -1074,61 +1074,41 @@ app.post('/api/scrape', auth, async (req, res) => {
 // Aktualizacja właściwości
 app.put('/api/properties/:id', auth, async (req, res) => {
     try {
-        console.log('Otrzymane dane do aktualizacji:', req.body);
-        console.log('ID nieruchomości:', req.params.id);
-
-        // Najpierw sprawdź czy nieruchomość istnieje
-        const property = await Property.findById(req.params.id)
-            .populate('addedBy', 'name email');
-
-        if (!property) {
-            return res.status(404).json({ error: 'Nieruchomość nie została znaleziona' });
-        }
-
-        // Przygotuj dane do aktualizacji
         const updates = {
-            title: req.body.title || property.title,
-            price: req.body.price || property.price,
-            area: req.body.area || property.area,
-            plotArea: req.body.plotArea || property.plotArea,
-            rooms: req.body.rooms || property.rooms,
-            location: req.body.location || property.location,
-            description: req.body.description !== undefined ? req.body.description : property.description,
-            status: req.body.status || property.status,
+            title: req.body.title,
+            price: parseInt(req.body.price),
+            area: parseFloat(req.body.area),
+            location: req.body.location,
+            description: req.body.description,
+            status: req.body.status,
+            rooms: req.body.rooms !== undefined ? parseInt(req.body.rooms) : null,
             edited: true,
             updatedAt: new Date()
         };
 
-        console.log('Przygotowane dane do aktualizacji:', updates);
+        console.log('Otrzymane aktualizacje:', updates);
 
-        try {
-            // Użyj findByIdAndUpdate z opcją new: true aby otrzymać zaktualizowany dokument
-            const updatedProperty = await Property.findByIdAndUpdate(
-                req.params.id,
-                { $set: updates },
-                { 
-                    new: true, // zwraca zaktualizowany dokument
-                    runValidators: true // uruchamia walidatory schematu
-                }
-            ).populate('addedBy', 'name email');
-
-            if (!updatedProperty) {
-                return res.status(404).json({ error: 'Nie można zaktualizować nieruchomości' });
+        const updatedProperty = await Property.findByIdAndUpdate(
+            req.params.id,
+            { $set: updates },
+            { 
+                new: true,
+                runValidators: true
             }
+        ).populate('addedBy', 'name email');
 
-            console.log('Zaktualizowana nieruchomość:', updatedProperty);
-            res.json(updatedProperty);
-
-        } catch (updateError) {
-            console.error('Błąd podczas aktualizacji dokumentu:', updateError);
-            throw updateError;
+        if (!updatedProperty) {
+            return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
         }
+
+        console.log('Zaktualizowana nieruchomość:', updatedProperty);
+        res.json(updatedProperty);
 
     } catch (error) {
         console.error('Błąd aktualizacji:', error);
         res.status(500).json({ 
             error: 'Wystąpił błąd podczas aktualizacji nieruchomości',
-            details: error.message 
+            details: error.message
         });
     }
 });
