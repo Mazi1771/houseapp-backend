@@ -251,6 +251,11 @@ const PropertySchema = new mongoose.Schema({
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
         required: true
+    },
+   rating: {
+        type: String,
+        enum: ['favorite', 'interested', 'not_interested', null],
+        default: null
     }
 });
 // Modele
@@ -532,6 +537,70 @@ app.get('/api/boards', auth, async (req, res) => {
     res.status(500).json({ error: 'Błąd podczas pobierania tablic' });
   }
 });
+// Dodaj nowy endpoint do obsługi ocen
+app.patch('/api/properties/:id/rating', auth, async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { rating } = req.body;
+
+        console.log('Aktualizacja oceny:', { id, rating });
+
+        // Sprawdź czy ocena jest prawidłowa
+        const validRatings = ['favorite', 'interested', 'not_interested', null];
+        if (!validRatings.includes(rating)) {
+            return res.status(400).json({
+                error: 'Nieprawidłowa wartość oceny',
+                validRatings
+            });
+        }
+
+        // Znajdź i zaktualizuj nieruchomość
+        const property = await Property.findById(id);
+        if (!property) {
+            return res.status(404).json({ error: 'Nie znaleziono nieruchomości' });
+        }
+
+        // Sprawdź czy użytkownik ma dostęp do tablicy
+        const board = await Board.findById(property.board);
+        if (!board) {
+            return res.status(404).json({ error: 'Nie znaleziono tablicy' });
+        }
+
+        const hasAccess = board.owner.equals(req.user._id) || 
+                         board.shared.some(share => 
+                            share.user.equals(req.user._id) && 
+                            share.status === 'accepted'
+                         );
+
+        if (!hasAccess) {
+            return res.status(403).json({ error: 'Brak dostępu do tej nieruchomości' });
+        }
+
+        // Aktualizuj ocenę
+        property.rating = rating;
+        await property.save();
+
+        // Zwróć zaktualizowaną nieruchomość
+        const updatedProperty = await Property.findById(id)
+            .populate('addedBy', 'name email');
+
+        console.log('Zaktualizowano ocenę:', { 
+            propertyId: id, 
+            newRating: rating,
+            property: updatedProperty 
+        });
+
+        res.json(updatedProperty);
+
+    } catch (error) {
+        console.error('Błąd podczas aktualizacji oceny:', error);
+        res.status(500).json({ 
+            error: 'Wystąpił błąd podczas aktualizacji oceny',
+            details: error.message 
+        });
+    }
+});
+
 //Endpoint do przenoszenia nieruchomości
 app.post('/api/properties/:propertyId/move', auth, async (req, res) => {
   try {
