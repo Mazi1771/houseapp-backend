@@ -27,7 +27,6 @@ app.use(express.urlencoded({ extended: true }));
 // Konfiguracja CORS
 app.use(cors({
   origin: function(origin, callback) {
-    // Pozwól na requesty bez origin (np. z Postman)
     if (!origin) {
       return callback(null, true);
     }
@@ -40,7 +39,7 @@ app.use(cors({
     }
   },
   credentials: true,
-  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'], // Dodane PATCH
   allowedHeaders: ['Content-Type', 'Authorization', 'Content-Length', 'X-Requested-With'],
   exposedHeaders: ['Content-Range', 'X-Content-Range']
 }));
@@ -537,8 +536,8 @@ app.get('/api/boards', auth, async (req, res) => {
     res.status(500).json({ error: 'Błąd podczas pobierania tablic' });
   }
 });
-// Dodaj nowy endpoint do obsługi ocen
-app.patch('/api/properties/:id/rating', auth, async (req, res) => {
+//nowy endpoint do obslugi ocen
+app.put('/api/properties/:id/rating', auth, async (req, res) => {
     try {
         const { id } = req.params;
         const { rating } = req.body;
@@ -600,6 +599,7 @@ app.patch('/api/properties/:id/rating', auth, async (req, res) => {
         });
     }
 });
+
 
 //Endpoint do przenoszenia nieruchomości
 app.post('/api/properties/:propertyId/move', auth, async (req, res) => {
